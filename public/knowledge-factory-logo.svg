@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 320" role="img" aria-labelledby="title desc">
+  <title id="title">Knowledge Factory</title>
+  <desc id="desc">Knowledge Factory brand logo</desc>
+  <rect width="900" height="320" fill="#ffffff"/>
+  <path d="M20 20h160v80h-18V38H38v244h124v-18h18v36H20z" fill="#dba62b"/>
+  <circle cx="93" cy="78" r="24" fill="#2963a0"/>
+  <path d="M60 125l72-8v130h26v23H60v-23h22v-90H60z" fill="#2963a0"/>
+  <text x="210" y="152" font-family="Arial, Helvetica, sans-serif" font-size="62" font-weight="700" fill="#2963a0" letter-spacing="1">KNOWLEDGE</text>
+  <text x="210" y="230" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700" fill="#2963a0" letter-spacing="1">FACTORY</text>
+  <text x="330" y="282" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="400" fill="#2963a0">craft | care | amplify</text>
+</svg>

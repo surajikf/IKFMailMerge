@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pandas
+openpyxl
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib
+sqlalchemy
+pydantic
+python-multipart
+sib-api-v3-sdk
+python-dotenv
+requests

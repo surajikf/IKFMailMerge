@@ -1,0 +1,5 @@
+Client Name,Email Address,Pending Amount,Due Date,Invoice Number,Company
+John Doe,john.doe@example.com,"$1,200.00",2026-04-15,INV-1001,Doe Enterprises
+Jane Smith,jane.smith@example.com,$450.50,2026-03-30,INV-1002,Smith Design
+Acme Corp,accounts@acme.com,"$5,000.00",2026-05-01,INV-1003,Acme Solutions
+Global Tech,billing@globaltech.com,"$2,100.00",2026-03-20,INV-1004,Global Systems

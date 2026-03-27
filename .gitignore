@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Databases
+*.db
+*.sqlite3
+
+# Node / Frontend
+node_modules/
+dist/
+stats.html
+
+# Secrets (OAuth / API)
+credentials.json
+token.json
+brevo_api_key.txt
+*.pem
+*.key
+
+# Logs
+*.log
+uvicorn.out.log
+uvicorn.err.log
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project Specific
+data/
+uploads/
+temp/
+/tmp/
+virtual_env/

@@ -1,0 +1,237 @@
+:root {
+  --primary: #1666d3;
+  --primary-hover: #0f56b7;
+  --primary-glow: rgba(22, 102, 211, 0.15);
+  --bg-studio: #fcfdfe;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-border: #e2e8f0;
+  --surface-divider: #f1f5f9;
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --success: #10b981;
+  --success-glow: rgba(16, 185, 129, 0.1);
+  --error: #ef4444;
+  --radius-xl: 32px;
+  --radius-lg: 20px;
+  --radius-md: 12px;
+  --shadow-premium: 0 20px 50px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.02);
+  --shadow-inner: inset 0 2px 4px 0 rgba(0, 0, 0, 0.02);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--bg-studio);
+  color: var(--text-main);
+  font-family: 'Inter', -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Outfit', sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+/* Premium Header Navigation */
+.studio-header {
+  position: sticky;
+  top: 0;
+  z-index: 2000;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(50px) saturate(180%);
+  -webkit-backdrop-filter: blur(50px) saturate(180%);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  padding: 0.75rem 0;
+}
+
+.nav-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(248, 250, 252, 0.8);
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--surface-border);
+}
+
+.studio-nav-link {
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 0.6rem 1.25rem;
+  border-radius: 999px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.studio-nav-link:hover {
+  color: var(--text-main);
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.studio-nav-link.active {
+  color: var(--primary);
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+/* Hero Section */
+.hero-canvas {
+  padding: 6rem 0;
+  text-align: center;
+}
+
+.hero-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--primary-glow);
+  color: var(--primary);
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 2rem;
+}
+
+.hero-title {
+  font-size: 4rem;
+  line-height: 1;
+  margin-bottom: 2rem;
+}
+
+/* Premium Cards (Linear style) */
+.studio-card {
+  background: var(--surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--shadow-premium);
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.studio-card:hover {
+  border-color: var(--primary);
+  transform: translateY(-4px);
+}
+
+.studio-card::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 0; width: 100%; height: 100%;
+  background: radial-gradient(circle at top left, var(--primary-glow), transparent 40%);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+
+.studio-card:hover::before {
+  opacity: 1;
+}
+
+/* Smart Process Stepper */
+.process-stepper {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 4rem;
+}
+
+.step-indicator {
+  width: 48px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-border);
+  transition: all 0.4s ease;
+}
+
+.step-indicator.active {
+  background: var(--primary);
+  width: 80px;
+}
+
+/* Buttons */
+.btn-studio {
+  background: var(--text-main) !important;
+  color: white !important;
+  padding: 0.9rem 2rem !important;
+  border-radius: 999px !important;
+  font-weight: 500 !important;
+  letter-spacing: -0.01em !important;
+  text-transform: none !important;
+  transition: all 0.2s ease !important;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1) !important;
+}
+
+.btn-studio:hover {
+  transform: scale(1.02);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15) !important;
+}
+
+.btn-studio-outline {
+  background: transparent !important;
+  border: 1px solid var(--surface-border) !important;
+  color: var(--text-main) !important;
+}
+
+/* Animations */
+@keyframes studioFadeUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-up {
+  animation: studioFadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Dropzone Premium States */
+.dropzone {
+  border: 2px dashed var(--surface-border);
+  border-radius: var(--radius-xl);
+  background: white;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.dropzone:hover {
+  border-color: var(--primary);
+  background: var(--primary-glow);
+  transform: translateY(-2px);
+}
+
+.dropzone.active {
+  border-color: var(--primary);
+  background: var(--primary-glow);
+  animation: dropzonePulse 2s infinite;
+}
+
+@keyframes dropzonePulse {
+  0% { box-shadow: 0 0 0 0 rgba(22, 102, 211, 0.4); }
+  70% { box-shadow: 0 0 0 20px rgba(22, 102, 211, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(22, 102, 211, 0); }
+}
+
+.dropzone-icon {
+  transition: transform 0.3s ease;
+}
+
+.dropzone:hover .dropzone-icon {
+  transform: translateY(-5px);
+}
+
+/* Remove MUI Overrides that leak */
+.MuiPaper-root {
+  background-image: none !important;
+}
