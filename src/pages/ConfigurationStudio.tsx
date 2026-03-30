@@ -5,8 +5,6 @@ import {
   Box,
   Typography,
   Paper,
-  Tabs,
-  Tab,
   TextField,
   Button,
   Grid,
@@ -62,7 +60,6 @@ interface SmtpAccount {
 }
 
 export default function ConfigurationStudio() {
-  const [tabIndex, setTabIndex] = useState(0);
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [smtpAccounts, setSmtpAccounts] = useState<SmtpAccount[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +67,8 @@ export default function ConfigurationStudio() {
   // SMTP Dialog State
   const [smtpDialogOpen, setSmtpDialogOpen] = useState(false);
   const [editingSmtp, setEditingSmtp] = useState<Partial<SmtpAccount & { smtp_password?: string }> | null>(null);
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const fetchSettings = async () => {
     try {
@@ -92,16 +91,20 @@ export default function ConfigurationStudio() {
     fetchSettings();
   }, []);
 
-  const handleSaveSettings = async () => {
+  const handleSaveSettings = async (overrides?: Partial<SettingsData>) => {
     if (!settings) return;
+    const dataToSave = overrides ? { ...settings, ...overrides } : settings;
     try {
-      await axios.post(`${API_BASE}/settings`, settings);
+      await axios.post(`${API_BASE}/settings`, dataToSave);
       Toast.fire({ icon: 'success', title: 'Configured.' });
-      fetchSettings();
+      if (overrides) {
+        setSettings(prev => prev ? { ...prev, ...overrides } : null);
+      } else {
+        fetchSettings();
+      }
     } catch (err) {
       const apiError = extractApiError(err, 'Failed to save.');
       Swal.fire({ icon: 'error', title: 'Error', text: apiError.message });
-    } finally {
     }
   };
 
@@ -145,11 +148,37 @@ export default function ConfigurationStudio() {
     }
   };
 
+  const handleVerifyConnection = async () => {
+    setVerifying(true);
+    setVerifyResult(null);
+    try {
+      const res = await axios.post(`${API_BASE}/settings/verify`);
+      setVerifyResult(res.data);
+      if (res.data.ok) {
+        Toast.fire({ icon: 'success', title: 'Verified', text: res.data.message });
+      } else {
+        Swal.fire({ icon: 'error', title: 'Verification Failed', text: res.data.message });
+      }
+    } catch (err) {
+      const apiErr = extractApiError(err);
+      setVerifyResult({ ok: false, message: apiErr.message });
+      Swal.fire({ icon: 'error', title: 'System Error', text: apiErr.message });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
   if (loading || !settings) {
     return (
       <Box display="flex" justifyContent="center" py={12}><CircularProgress thickness={5} size={48} /></Box>
     );
   }
+
+  const isProviderActive = (id: string) => {
+     if (settings.active_provider === id) return true;
+     if (id === 'SMTP' && settings.active_provider === 'GMAIL_SMTP') return true;
+     return false;
+  };
 
   return (
     <Box sx={{ maxWidth: '100%', mx: 'auto', animation: 'studioFadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1)' }}>
@@ -163,129 +192,112 @@ export default function ConfigurationStudio() {
       {/* Primary Channel Selection (Horizontal Grid) */}
       <Grid container spacing={2} sx={{ mb: 6 }}>
          {[
-            { id: 'GMAIL', label: 'Gmail Pro', icon: <GoogleIcon />, desc: 'Native OAuth Access' },
-            { id: 'BREVO', label: 'Brevo API', icon: <EmailIcon />, desc: 'High-Scale Transactional' },
             { id: 'SMTP', label: 'SMTP Bridge', icon: <LanIcon />, desc: 'Custom Protocols' },
+            { id: 'BREVO', label: 'Brevo API', icon: <EmailIcon />, desc: 'High-Scale Transactional' },
+            { id: 'GMAIL', label: 'Gmail Pro', icon: <GoogleIcon />, desc: 'Native OAuth Access' },
          ].map((p) => (
             <Grid item xs={12} md={4} key={p.id}>
                <Box 
-                onClick={() => setSettings({ ...settings, active_provider: p.id as any })}
+                onClick={() => handleSaveSettings({ active_provider: p.id as any })}
                 sx={{ 
                     p: 3, 
                     borderRadius: '24px', 
                     cursor: 'pointer', 
-                    border: '1.5px solid',
-                    borderColor: settings.active_provider === p.id ? 'var(--primary)' : 'var(--surface-border)',
-                    bgcolor: settings.active_provider === p.id ? 'var(--primary-glow)' : 'var(--surface)',
-                    transition: 'all 0.2s ease',
-                    textAlign: 'center'
+                    border: '2px solid',
+                    borderColor: isProviderActive(p.id) ? 'var(--primary)' : 'var(--surface-border)',
+                    bgcolor: isProviderActive(p.id) ? 'var(--primary-glow)' : 'var(--surface)',
+                    boxShadow: isProviderActive(p.id) ? '0 12px 40px var(--primary-glow)' : 'none',
+                    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+                    textAlign: 'center',
+                    position: 'relative',
+                    overflow: 'hidden',
+                    '&:hover': {
+                      borderColor: 'var(--primary)',
+                      transform: 'translateY(-4px)'
+                    }
                 }}
                >
-                  <Box sx={{ mb: 1.5, color: settings.active_provider === p.id ? 'var(--primary)' : 'var(--text-muted)' }}>{p.icon}</Box>
-                  <Typography variant="body2" sx={{ fontWeight: 900 }}>{p.label}</Typography>
+                  {isProviderActive(p.id) && (
+                    <Box sx={{ position: 'absolute', top: 12, right: 12 }}>
+                      <Box className="pulse-dot" sx={{ bgcolor: verifyResult?.ok ? 'var(--success)' : (verifyResult === null ? 'var(--primary)' : 'var(--error)') }} />
+                    </Box>
+                  )}
+                  <Box sx={{ mb: 1.5, color: isProviderActive(p.id) ? 'var(--primary)' : 'var(--text-muted)' }}>{p.icon}</Box>
+                  <Typography variant="body2" sx={{ fontWeight: 900, color: isProviderActive(p.id) ? 'var(--text-main)' : 'var(--text-muted)' }}>{p.label}</Typography>
                   <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 700 }}>{p.desc}</Typography>
                </Box>
             </Grid>
          ))}
       </Grid>
 
-      <Paper className="studio-card" sx={{ p: 0, overflow: 'hidden' }}>
-        <Tabs value={tabIndex} onChange={(_: any, v: number) => setTabIndex(v)} sx={{ borderBottom: '1px solid var(--surface-divider)', px: 4, pt: 1 }}>
-          <Tab label="Connection" sx={{ textTransform: 'none', fontWeight: 800, px: 3 }} />
-          <Tab label="Defaults" sx={{ textTransform: 'none', fontWeight: 800, px: 3 }} />
-        </Tabs>
-
-        <Box sx={{ p: 5 }}>
-          {tabIndex === 0 && (
-            <Box>
-              {settings.active_provider === 'GMAIL' && (
-                <Box textAlign="center" py={4}>
-                  <GoogleIcon sx={{ fontSize: 64, color: '#ea4335', mb: 3 }} />
-                  <Typography variant="h6" sx={{ fontWeight: 900, mb: 1 }}>Google Direct Link</Typography>
-                  <Typography variant="body2" sx={{ color: 'var(--text-muted)', mb: 4, maxWidth: 400, mx: 'auto' }}>
-                    Connect your workspace securely. IKF uses bank-level OAuth protocols to manage outreach without password storage.
-                  </Typography>
-                  <Box display="flex" justifyContent="center" gap={2}>
-                    <Button variant="contained" className="btn-studio" onClick={handleConnectGmail}>Link Google Workspace</Button>
-                    <Button variant="outlined" className="btn-studio-outline" sx={{ borderRadius: 999 }} onClick={handleDisconnectGmail}>Deactivate</Button>
-                  </Box>
+      <Paper className="studio-card" sx={{ p: 5 }}>
+          <Box>
+            {settings.active_provider === 'GMAIL' && (
+              <Box textAlign="center" py={4}>
+                <GoogleIcon sx={{ fontSize: 64, color: '#ea4335', mb: 3 }} />
+                <Typography variant="h6" sx={{ fontWeight: 900, mb: 1 }}>Google Direct Link</Typography>
+                <Typography variant="body2" sx={{ color: 'var(--text-muted)', mb: 4, maxWidth: 400, mx: 'auto' }}>
+                  Connect your workspace securely. IKF uses bank-level OAuth protocols to manage outreach without password storage.
+                </Typography>
+                <Box display="flex" justifyContent="center" gap={2}>
+                  <Button variant="contained" className="btn-studio" onClick={handleConnectGmail}>Link Google Workspace</Button>
+                  <Button variant="outlined" className="btn-studio-outline" sx={{ borderRadius: 999 }} onClick={handleDisconnectGmail}>Deactivate</Button>
                 </Box>
-              )}
-
-              {settings.active_provider === 'BREVO' && (
-                <Box display="grid" gap={4}>
-                  <TextField fullWidth label="Brevo API Key (v3)" type="password" value={settings.brevo_api_key || ''} onChange={(e) => setSettings({ ...settings, brevo_api_key: e.target.value })} />
-                  <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
-                    <TextField fullWidth label="Sender Display Name" value={settings.brevo_sender_name || ''} onChange={(e) => setSettings({ ...settings, brevo_sender_name: e.target.value })} />
-                    <TextField fullWidth label="Sender Email Address" value={settings.brevo_sender_email || ''} onChange={(e) => setSettings({ ...settings, brevo_sender_email: e.target.value })} />
-                  </Box>
-                  <Button variant="contained" className="btn-studio" onClick={handleSaveSettings}>Update Channel Configuration</Button>
-                </Box>
-              )}
-
-              {settings.active_provider === 'SMTP' && (
-                <Box>
-                  <Box display="flex" justifyContent="space-between" mb={3} alignItems="center">
-                    <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Network Nodes</Typography>
-                    <Button size="small" startIcon={<AddIcon />} sx={{ fontWeight: 800 }} onClick={() => { setEditingSmtp({ smtp_port: 465, smtp_host: 'smtp.gmail.com' }); setSmtpDialogOpen(true); }}>Register Node</Button>
-                  </Box>
-                  <Box display="grid" gap={2}>
-                    {smtpAccounts.map(acc => (
-                      <Card key={acc.id} sx={{ borderRadius: '18px', border: '1px solid var(--surface-divider)', boxShadow: 'none' }}>
-                        <CardContent sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2.5 }}>
-                          <Box sx={{ p: 1.5, bgcolor: acc.is_active ? 'var(--primary-glow)' : 'var(--surface-divider)', borderRadius: '12px' }}>
-                             <LanIcon sx={{ color: acc.is_active ? 'var(--primary)' : 'var(--text-muted)' }} />
-                          </Box>
-                          <Box flex={1}>
-                            <Typography variant="body2" sx={{ fontWeight: 900 }}>{acc.display_name}</Typography>
-                            <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 700 }}>{acc.smtp_user} Â· {acc.smtp_host}</Typography>
-                          </Box>
-                          <Box display="flex" gap={1}>
-                            {!acc.is_active && <IconButton size="small" onClick={() => handleSmtpAction('activate', acc.id)}><CheckCircleIcon fontSize="small" /></IconButton>}
-                            <IconButton size="small" onClick={() => { setEditingSmtp(acc); setSmtpDialogOpen(true); }}><EditIcon fontSize="small" /></IconButton>
-                            <IconButton size="small" color="error" onClick={() => handleSmtpAction('delete', acc.id)}><DeleteIcon fontSize="small" /></IconButton>
-                          </Box>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </Box>
-                </Box>
-              )}
-            </Box>
-          )}
-
-          {tabIndex === 1 && (
-            <Box display="grid" gap={4}>
-              <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 2 }}>Universal Subject Logic</Typography>
-                <TextField fullWidth placeholder="Enter default outreach subject..." value={settings.email_template_subject} onChange={(e) => setSettings({ ...settings, email_template_subject: e.target.value })} />
-                <Typography variant="caption" sx={{ color: 'var(--text-muted)', mt: 1, display: 'block', fontWeight: 700 }}>Use high-conversion variables like {"{{Name}}"}, {"{{Amount}}"}</Typography>
               </Box>
-              
+            )}
+
+            {settings.active_provider === 'BREVO' && (
+              <Box display="grid" gap={4}>
+                <TextField fullWidth label="Brevo API Key (v3)" type="password" value={settings.brevo_api_key || ''} onChange={(e) => setSettings({ ...settings, brevo_api_key: e.target.value })} />
+                <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
+                  <TextField fullWidth label="Sender Display Name" value={settings.brevo_sender_name || ''} onChange={(e) => setSettings({ ...settings, brevo_sender_name: e.target.value })} />
+                  <TextField fullWidth label="Sender Email Address" value={settings.brevo_sender_email || ''} onChange={(e) => setSettings({ ...settings, brevo_sender_email: e.target.value })} />
+                </Box>
+                <Button variant="contained" className="btn-studio" onClick={() => handleSaveSettings()}>Update Channel Configuration</Button>
+              </Box>
+            )}
+
+            {settings.active_provider === 'SMTP' && (
               <Box>
-                <Typography variant="subtitle2" sx={{ fontWeight: 900, mb: 2 }}>Artistic Branding Direction</Typography>
-                <Box display="flex" gap={2}>
-                  {['PROFESSIONAL', 'CREATIVE'].map(type => (
-                    <Box
-                      key={type}
-                      onClick={() => setSettings({ ...settings, active_template_type: type as any })}
-                      sx={{
-                        flex: 1, p: 3, borderRadius: '20px', cursor: 'pointer', border: '1.5px solid',
-                        borderColor: settings.active_template_type === type ? 'var(--primary)' : 'var(--surface-border)',
-                        bgcolor: settings.active_template_type === type ? 'var(--primary-glow)' : 'transparent',
-                        textAlign: 'center'
-                      }}
-                    >
-                      <Typography variant="body2" sx={{ fontWeight: 900 }}>{type}</Typography>
-                    </Box>
+                <Box display="flex" justifyContent="space-between" mb={3} alignItems="center">
+                  <Typography variant="subtitle1" sx={{ fontWeight: 900 }}>Network Nodes</Typography>
+                  <Button size="small" startIcon={<AddIcon />} sx={{ fontWeight: 800 }} onClick={() => { setEditingSmtp({ smtp_port: 465, smtp_host: 'smtp.gmail.com' }); setSmtpDialogOpen(true); }}>Register Node</Button>
+                </Box>
+                <Box display="grid" gap={2}>
+                  {smtpAccounts.map(acc => (
+                    <Card key={acc.id} sx={{ borderRadius: '18px', border: '1px solid var(--surface-divider)', boxShadow: 'none' }}>
+                      <CardContent sx={{ p: 2.5, display: 'flex', alignItems: 'center', gap: 2.5 }}>
+                        <Box sx={{ p: 1.5, bgcolor: acc.is_active ? 'var(--primary-glow)' : 'var(--surface-divider)', borderRadius: '12px' }}>
+                           <LanIcon sx={{ color: acc.is_active ? 'var(--primary)' : 'var(--text-muted)' }} />
+                        </Box>
+                        <Box flex={1}>
+                          <Typography variant="body2" sx={{ fontWeight: 900 }}>{acc.display_name}</Typography>
+                          <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 700 }}>{acc.smtp_user} Â· {acc.smtp_host}</Typography>
+                        </Box>
+                        <Box display="flex" gap={1}>
+                          {!acc.is_active && <IconButton size="small" onClick={() => handleSmtpAction('activate', acc.id)}><CheckCircleIcon fontSize="small" /></IconButton>}
+                          <IconButton size="small" onClick={() => { setEditingSmtp(acc); setSmtpDialogOpen(true); }}><EditIcon fontSize="small" /></IconButton>
+                          <IconButton size="small" color="error" onClick={() => handleSmtpAction('delete', acc.id)}><DeleteIcon fontSize="small" /></IconButton>
+                        </Box>
+                      </CardContent>
+                    </Card>
                   ))}
                 </Box>
               </Box>
-              
-              <Button variant="contained" className="btn-studio" sx={{ mt: 2 }} onClick={handleSaveSettings}>Save Studio Defaults</Button>
+            )}
+            
+            <Box sx={{ mt: 5, pt: 4, borderTop: '1px solid var(--surface-divider)', display: 'flex', justifyContent: 'center' }}>
+              <Button 
+                startIcon={verifying ? <CircularProgress size={16} color="inherit" /> : <CheckCircleIcon />} 
+                className="btn-studio" 
+                onClick={handleVerifyConnection}
+                disabled={verifying}
+                sx={{ px: 4 }}
+              >
+                {verifying ? 'Verifying Link...' : 'Verify Live Connection'}
+              </Button>
             </Box>
-          )}
-        </Box>
+          </Box>
       </Paper>
 
       {/* SMTP Edit Dialog */}

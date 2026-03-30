@@ -33,3 +33,18 @@ class SmtpService:
             return True, "Sent"
         except Exception as e:
             return False, str(e)
+
+    def verify_login(self):
+        try:
+            if int(self.port) == 465:
+                with smtplib.SMTP_SSL(self.host, int(self.port), timeout=10) as server:
+                    server.login(self.user, self.password)
+                    server.noop()
+            else:
+                with smtplib.SMTP(self.host, int(self.port), timeout=10) as server:
+                    server.starttls()
+                    server.login(self.user, self.password)
+                    server.noop()
+            return True, "SMTP Node Reachable & Authenticated."
+        except Exception as e:
+            return False, f"SMTP Verification Failed: {str(e)}"

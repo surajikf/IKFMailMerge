@@ -39,6 +39,7 @@ class SystemSettingsBase(BaseModel):
     email_template_creative_html: Optional[str] = None
     active_template_type: Optional[str] = "PROFESSIONAL" # PROFESSIONAL, CREATIVE
     email_template_is_html: bool = True
+    active_smtp_name: Optional[str] = None
 
 class SystemSettings(SystemSettingsBase):
     id: int
@@ -64,6 +65,7 @@ class SystemSettingsUpdate(BaseModel):
     email_template_creative_html: Optional[str] = None
     active_template_type: Optional[str] = None
     email_template_is_html: Optional[bool] = None
+    active_smtp_name: Optional[str] = None
 
 class SendEmailPayload(BaseModel):
     batch_id: str

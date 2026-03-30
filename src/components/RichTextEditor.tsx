@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useImperativeHandle, forwardRef, useCallback } from 'react';
 import { Box, ButtonGroup, IconButton, Tooltip, Divider } from '@mui/material';
 import {
     FormatBold,
@@ -20,20 +20,77 @@ interface RichTextEditorProps {
     placeholder?: string;
 }
 
-export default function RichTextEditor({ value, onChange, placeholder }: RichTextEditorProps) {
-    const editorRef = useRef<HTMLDivElement>(null);
+export interface RichTextEditorHandle {
+    insertAtCursor: (text: string) => void;
+}
 
-    // Synchronize external value with editor content (only when manually changed)
+const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
+    ({ value, onChange, placeholder }, ref) => {
+    const editorRef = useRef<HTMLDivElement>(null);
+    const savedRangeRef = useRef<Range | null>(null);
+
+    // Save the current cursor position whenever selection changes inside the editor
+    const saveCursorPosition = useCallback(() => {
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            // Only save if the selection is inside our editor
+            if (editorRef.current && editorRef.current.contains(range.commonAncestorContainer)) {
+                savedRangeRef.current = range.cloneRange();
+            }
+        }
+    }, []);
+
+    // Expose insertAtCursor method to parent via ref
+    useImperativeHandle(ref, () => ({
+        insertAtCursor: (text: string) => {
+            const editor = editorRef.current;
+            if (!editor) return;
+
+            // Focus the editor first
+            editor.focus();
+
+            // Restore saved cursor position if available
+            const sel = window.getSelection();
+            if (sel && savedRangeRef.current) {
+                sel.removeAllRanges();
+                sel.addRange(savedRangeRef.current);
+            }
+
+            // Insert the text at cursor position using insertText command
+            document.execCommand('insertText', false, text);
+
+            // Update the saved range after insertion
+            if (sel && sel.rangeCount > 0) {
+                savedRangeRef.current = sel.getRangeAt(0).cloneRange();
+            }
+
+            // Notify parent of the change
+            onChange(editor.innerHTML);
+        }
+    }), [onChange]);
+
+    // Synchronize external value with editor content (only on mount)
     useEffect(() => {
         if (editorRef.current && editorRef.current.innerHTML !== value) {
             editorRef.current.innerHTML = value;
         }
     }, []);
 
+    // Listen for selection changes to track cursor position
+    useEffect(() => {
+        const handleSelectionChange = () => {
+            saveCursorPosition();
+        };
+        document.addEventListener('selectionchange', handleSelectionChange);
+        return () => document.removeEventListener('selectionchange', handleSelectionChange);
+    }, [saveCursorPosition]);
+
     const execCommand = (command: string, value: string | undefined = undefined) => {
         document.execCommand(command, false, value);
         if (editorRef.current) {
             onChange(editorRef.current.innerHTML);
+            saveCursorPosition();
         }
     };
 
@@ -48,6 +105,9 @@ export default function RichTextEditor({ value, onChange, placeholder }: RichTex
         const text = e.clipboardData.getData('text/plain');
         document.execCommand('insertText', false, text);
     };
+
+    const handleMouseUp = () => saveCursorPosition();
+    const handleKeyUp = () => saveCursorPosition();
 
     return (
         <Box sx={{ 
@@ -115,6 +175,8 @@ export default function RichTextEditor({ value, onChange, placeholder }: RichTex
                 contentEditable
                 onInput={handleInput}
                 onPaste={handlePaste}
+                onMouseUp={handleMouseUp}
+                onKeyUp={handleKeyUp}
                 sx={{ 
                     minWidth: 0,
                     width: '100%',
@@ -164,4 +226,7 @@ export default function RichTextEditor({ value, onChange, placeholder }: RichTex
             />
         </Box>
     );
-}
+});
+
+RichTextEditor.displayName = 'RichTextEditor';
+export default RichTextEditor;

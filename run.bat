@@ -1,18 +1,32 @@
 @echo off
 echo ==================================================
-echo   Automated Invoice Email System - Standalone Mode
+echo   IKF MailMerge - Standalone Production Mode
 echo ==================================================
 echo.
 
-:: Check for Python
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python not found. Please install Python 3.9+ 
+:: 1. Verify environment
+echo [INFO] Starting IKF MailMerge...
+
+:: 2. Identify the local Python (Prioritize Portable No-Install)
+set "PY_PATH="
+if exist "python_bin\python.exe" (
+    set "PY_PATH=python_bin\python.exe"
+) else if exist ".venv\Scripts\python.exe" (
+    set "PY_PATH=.venv\Scripts\python.exe"
+) else if exist "venv\Scripts\python.exe" (
+    set "PY_PATH=venv\Scripts\python.exe"
+)
+
+if "%PY_PATH%"=="" (
+    echo [ERROR] Virtual environment NOT found in this folder.
+    echo Please make sure the .venv or venv folder exists.
     pause
     exit /b
 )
 
-:: Check for Node
+echo [INFO] Using virtual environment: %PY_PATH%
+
+:: 3. Check for Node (Required for Frontend)
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Node.js not found. Please install Node.js.
@@ -20,43 +34,19 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-:: Setup Python Venv if it doesn't exist
-if not exist "venv" (
-    if not exist ".venv" (
-        echo [INFO] Creating Python virtual environment...
-        python -m venv .venv
-    )
-)
-
-:: Activate Python environment
-if exist ".venv\Scripts\activate" (
-    call .venv\Scripts\activate
-) else (
-    call venv\Scripts\activate
-)
-
-:: Install dependencies
-echo [INFO] Installing Python dependencies...
-pip install -r requirements.txt
-
-if not exist "node_modules" (
-    echo [INFO] Installing Node.js dependencies...
-    npm install
-)
-
-echo.
-echo [INFO] Building frontend for standalone serving...
+:: 4. Build Frontend
+echo [INFO] Building modern frontend...
 call npm run build
-
 if %errorlevel% neq 0 (
-    echo [ERROR] Frontend build failed. Fix the errors above and run again.
+    echo [ERROR] Frontend build failed.
     pause
     exit /b
 )
 
+:: 5. Start Backend
 echo.
-echo [SUCCESS] Starting standalone application
-echo [INFO] FastAPI will serve both the API and the built frontend.
-python start_server.py
+echo [SUCCESS] Starting IKF MailMerge Monolith on Port 8000
+echo [INFO] Serving API + React SPA...
+"%PY_PATH%" start_server.py
 
 pause

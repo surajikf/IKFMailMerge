@@ -52,3 +52,11 @@ class GmailService:
             return True, send_message['id']
         except HttpError as error:
             return False, str(error)
+
+    def verify_connection(self):
+        try:
+            # Check for Gmail Profile
+            profile = self.service.users().getProfile(userId='me').execute()
+            return True, f"Gmail Connected: {profile.get('emailAddress')}"
+        except Exception as e:
+            return False, f"Gmail Connection Error: {str(e)}"

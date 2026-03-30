@@ -34,3 +34,12 @@ class BrevoService:
             return True, api_response.message_id
         except ApiException as e:
             return False, str(e)
+
+    def verify_api_key(self):
+        try:
+            # Use the Account API to verify the key
+            account_api = sib_api_v3_sdk.AccountApi(sib_api_v3_sdk.ApiClient(self.configuration))
+            account_api.get_account()
+            return True, "Brevo API connectivity verified."
+        except ApiException as e:
+            return False, f"Brevo Verification Failed: {str(e)}"

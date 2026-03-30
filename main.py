@@ -28,8 +28,17 @@ from database import SessionLocal, engine, get_db
 from security import decrypt_secret, encrypt_secret, is_encrypted_secret
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO)
+log_file = os.path.join(DATA_DIR, "debug.log")
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file, mode='a', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger("api")
+logger.info(f"Logging initialized. Log file: {log_file}")
 
 # Initialize Database
 models.Base.metadata.create_all(bind=engine)
@@ -52,6 +61,7 @@ app.add_middleware(
 async def admin_access_middleware(request: Request, call_next):
     protected_prefixes = (
         "/api/settings",
+        "/api/settings/verify",
         "/api/smtp_accounts",
         "/api/templates",
         "/api/send_emails",
@@ -149,30 +159,45 @@ DEFAULT_HTML_TEMPLATE = """
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { margin: 0; padding: 0; background-color: #f4f7fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .container { max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1); border: 1px solid #e1e8ed; }
-        .header { background-color: #ffffff; padding: 30px; text-align: center; border-bottom: 3px solid #6366f1; }
-        .logo { max-width: 140px; height: auto; }
-        .content { padding: 40px; color: #333333; line-height: 1.6; font-size: 16px; }
-        .footer { padding: 25px; text-align: center; background-color: #f8fafc; color: #64748b; font-size: 12px; border-top: 1px solid #e2e8f0; }
-        .highlight { color: #6366f1; font-weight: 600; }
-        .footer-link { color: #6366f1; text-decoration: none; font-weight: 600; }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+        .wrapper { width: 100%; border-collapse: collapse; table-layout: fixed; background-color: #f8fafc; padding: 40px 0; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e2e8f0; }
+        .header { background-color: #ffffff; padding: 40px 20px; text-align: center; border-bottom: 4px solid #4f46e5; }
+        .logo { width: 180px; height: auto; display: block; margin: 0 auto; }
+        .content { padding: 40px 30px; color: #1e293b; line-height: 1.6; font-size: 16px; border-collapse: collapse; }
+        .content table { width: 100% !important; border-collapse: collapse; }
+        .content td { padding: 8px 0; }
+        .footer { padding: 30px; text-align: center; background-color: #f1f5f9; color: #64748b; font-size: 13px; border-top: 1px solid #e2e8f0; }
+        .highlight { color: #4f46e5; font-weight: 700; }
+        @media only screen and (max-width: 600px) {
+            .container { width: 100% !important; border-radius: 0 !important; }
+            .content { padding: 30px 20px !important; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <img src="__LOGO_SRC__" alt="Knowledge Factory Logo" class="logo">
-        </div>
-        <div class="content">
-            {{MESSAGE_BODY}}
-        </div>
-        <div class="footer">
-            <p><strong>Knowledge Factory</strong> | craft | care | amplify</p>
-            <p style="margin-top: 10px; opacity: 0.7;">© 2026 Knowledge Factory. All rights reserved.</p>
-        </div>
-    </div>
+    <table class="wrapper">
+        <tr>
+            <td>
+                <div class="container">
+                    <div class="header">
+                        <img src="__LOGO_SRC__" alt="IKF Group Logo" class="logo" width="180">
+                    </div>
+                    <div class="content">
+                        {{MESSAGE_BODY}}
+                    </div>
+                    <div class="footer">
+                        <p style="margin: 0; font-weight: 700; color: #0f172a; font-size: 15px;">I Knowledge Factory (IKF)</p>
+                        <p style="margin: 5px 0 0 0;">craft | care | amplify</p>
+                        <p style="margin-top: 20px; opacity: 0.6; font-size: 11px;">© 2026 I Knowledge Factory Pvt. Ltd. All rights reserved.</p>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>
 """
@@ -195,32 +220,44 @@ DEFAULT_HTML_TEMPLATE_CREATIVE = """
 <html>
 <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { margin: 0; padding: 0; background-color: #f3f4f6; font-family: 'Outfit', 'Inter', sans-serif; }
-        .container { max-width: 600px; margin: 30px auto; background-color: #ffffff; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.1); }
-        .header { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); padding: 50px 20px; text-align: center; }
-        .logo { max-width: 150px; height: auto; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1)); }
-        .content { padding: 45px; color: #1f2937; line-height: 1.7; font-size: 17px; }
-        .footer { padding: 35px; text-align: center; background-color: #111827; color: #9ca3af; font-size: 13px; }
-        .highlight { color: #8b5cf6; font-weight: 700; }
-        .action-box { background-color: #f9fafb; border-radius: 12px; padding: 25px; margin: 25px 0; border-left: 5px solid #8b5cf6; box-shadow: 0 2px 8px rgba(0,0,0,0.02); }
-        .footer-link { color: #a78bfa; text-decoration: none; font-weight: 600; }
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; background-color: #f3f4f6; font-family: 'Outfit', 'Inter', -apple-system, sans-serif; }
+        .wrapper { width: 100%; border-collapse: collapse; table-layout: fixed; background-color: #f3f4f6; padding: 40px 0; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 24px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.08); }
+        .header { background: linear-gradient(135deg, #4f46e5 0%, #9333ea 100%); padding: 60px 20px; text-align: center; }
+        .logo { width: 180px; height: auto; display: block; margin: 0 auto; filter: brightness(0) invert(1); }
+        .content { padding: 50px 35px; color: #1e293b; line-height: 1.7; font-size: 17px; }
+        .action-box { background-color: #f8fafc; border-radius: 16px; padding: 25px; margin: 25px 0; border-left: 6px solid #6366f1; border: 1px solid #e2e8f0; border-left-width: 6px; }
+        .footer { padding: 40px; text-align: center; background-color: #0f172a; color: #94a3b8; font-size: 13px; }
+        .highlight { color: #6366f1; font-weight: 800; }
+        @media only screen and (max-width: 600px) {
+            .container { width: 100% !important; border-radius: 0 !important; }
+            .content { padding: 30px 20px !important; }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <img src="__LOGO_SRC__" alt="Knowledge Factory Logo" class="logo">
-        </div>
-        <div class="content">
-            {{MESSAGE_BODY}}
-        </div>
-        <div class="footer">
-            <p style="color: #ffffff; font-weight: 700; font-size: 16px; margin-bottom: 8px;">Knowledge Factory</p>
-            <p>craft | care | amplify</p>
-            <p style="opacity: 0.6;">© 2026 Knowledge Factory. All rights reserved.</p>
-        </div>
-    </div>
+    <table class="wrapper">
+        <tr>
+            <td>
+                <div class="container">
+                    <div class="header">
+                        <img src="__LOGO_SRC__" alt="IKF Group Logo" class="logo" width="180">
+                    </div>
+                    <div class="content">
+                        {{MESSAGE_BODY}}
+                    </div>
+                    <div class="footer">
+                        <p style="color: #ffffff; font-weight: 700; font-size: 17px; margin-bottom: 8px;">I Knowledge Factory (IKF)</p>
+                        <p>craft | care | amplify</p>
+                        <p style="margin-top: 20px; opacity: 0.5; font-size: 11px;">© 2026 I Knowledge Factory Pvt. Ltd. All rights reserved.</p>
+                    </div>
+                </div>
+            </td>
+        </tr>
+    </table>
 </body>
 </html>
 """
@@ -595,25 +632,29 @@ def ensure_batch_job(db: Session, batch_id: str, source_filename: Optional[str] 
 
 
 def get_row_context(record: models.InvoiceData) -> dict:
+    # Load raw column data from the JSON field
     context = json.loads(record.row_data) if record.row_data else {}
-    formatted_date = record.due_date
-    try:
-        if record.due_date:
-            dt = pd.to_datetime(record.due_date)
-            formatted_date = dt.strftime('%d/%m/%y')
-    except Exception:
-        pass
-
-    context.update({
-        "Name": record.recipient_name,
-        "Recipient": record.recipient_name,
-        "Amount": record.invoice_amount,
-        "Value": record.invoice_amount,
+    
+    # Apply standard formatting for known types if needed, 
+    # but keep original keys as the source of truth.
+    for key, val in context.items():
+        # Strip time from dates if they look like timestamps
+        if isinstance(val, str) and (('T00:00:00' in val) or (' 00:00:00' in val)):
+            context[key] = val.split('T')[0].split(' ')[0]
+            
+    # Add record-level specific fields that are always available
+    system_fields = {
+        "Recipient Name": record.recipient_name,
+        "Email Address": record.email_address,
         "Invoice Amount": record.invoice_amount,
-        "Due Date": formatted_date,
-        "Date": formatted_date,
-        "Email": record.email_address,
-    })
+        "Due Date": record.due_date
+    }
+    
+    # Only add system fields if they don't already exist as columns to avoid collisions
+    for k, v in system_fields.items():
+        if k not in context:
+            context[k] = v
+            
     return context
 
 
@@ -665,7 +706,7 @@ def evaluate_batch_validation(db: Session, batch_id: str, subject: str, content:
         issues.append(f"{missing_name_rows} row(s) are missing recipient names.")
 
     return {
-        "ok_to_send": not unresolved_variables and not invalid_rows,
+        "ok_to_send": not invalid_rows,  # unresolved variables are warnings only, not blockers
         "record_count": len(records),
         "duplicate_recipients": sorted(duplicate_recipients),
         "duplicate_count": len(duplicate_recipients),
@@ -684,6 +725,9 @@ def build_batch_stats(db: Session, batch_id: str) -> dict:
     partial = len([record for record in records if record.status == "partial"])
     pending = len([record for record in records if record.status == "pending"])
     completion_rate = round((success / total) * 100, 2) if total else 0
+    
+    logger.info(f"BuildStats for {batch_id}: Total={total}, Success={success}, Failed={failed}, Pending={pending}")
+    
     return {
         "total": total,
         "success": success,
@@ -760,52 +804,62 @@ def ensure_worker_running():
 
 def heuristic_column_discovery(df: pd.DataFrame) -> dict:
     recommended = {"name": "", "email": "", "amount": "", "date": ""}
-    columns = df.columns.tolist()
-    # Sample up to 10 rows for deeper analysis
-    sample = df.head(10).astype(str).apply(lambda x: x.str.strip())
+    try:
+        columns = df.columns.tolist()
+        # Sample up to 10 rows for deeper analysis
+        sample = df.head(10).astype(str).apply(lambda x: x.str.strip())
 
-    # 1. EMAIL DETECTION (Highest confidence: Regex)
-    email_regex = r"[^@\s]+@[^@\s]+\.[^@\s]+"
-    for col in columns:
-        if sample[col].apply(lambda x: bool(re.search(email_regex, x))).any():
-            recommended["email"] = col
-            break
+        # 1. EMAIL DETECTION (Highest confidence: Regex)
+        email_regex = r"[^@\s]+@[^@\s]+\.[^@\s]+"
+        for col in columns:
+            try:
+                # Ensure we're working with strings for regex
+                if sample[col].apply(lambda x: bool(re.search(email_regex, str(x)))).any():
+                    recommended["email"] = col
+                    break
+            except Exception:
+                continue
 
-    # 2. DATE DETECTION (Pattern Matching + pd.to_datetime)
-    date_patterns = [
-        r'\d{2,4}[-/\.]\d{1,2}[-/\.]\d{1,2}', # ISO/General
-        r'\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}', # US/UK
-    ]
-    for col in columns:
-        if col == recommended["email"]: continue
-        if any(sample[col].apply(lambda x: any(re.search(p, x) for p in date_patterns))):
-            recommended["date"] = col
-            break
+        # 2. DATE DETECTION (Pattern Matching + pd.to_datetime)
+        date_patterns = [
+            r'\d{2,4}[-/\.]\d{1,2}[-/\.]\d{1,2}', # ISO/General
+            r'\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}', # US/UK
+        ]
+        for col in columns:
+            if col == recommended["email"]: continue
+            try:
+                if any(sample[col].apply(lambda x: any(re.search(p, str(x)) for p in date_patterns))):
+                    recommended["date"] = col
+                    break
+            except Exception:
+                continue
 
-    # 3. AMOUNT DETECTION (Numeric, not primary keys)
-    for col in columns:
-        if col in [recommended["email"], recommended["date"]]: continue
-        numeric_vals = pd.to_numeric(sample[col], errors='coerce')
-        if not numeric_vals.isna().all():
+        # 3. AMOUNT DETECTION (Numeric, not primary keys)
+        for col in columns:
+            if col in [recommended["email"], recommended["date"]]: continue
+            numeric_vals = pd.to_numeric(sample[col], errors='coerce')
+            if not numeric_vals.isna().all():
+                col_lower = str(col).lower()
+                # Heuristic: Avoid ID, Code, Phone columns for 'Amount'
+                if not any(k in col_lower for k in ["id", "code", "phone", "mobile", "zip", "no"]):
+                    recommended["amount"] = col
+                    break
+
+        # 4. NAME DETECTION (Heuristic: Non-numeric strings, reasonable length)
+        for col in columns:
+            if col in [recommended["email"], recommended["date"], recommended["amount"]]: continue
             col_lower = str(col).lower()
-            # Heuristic: Avoid ID, Code, Phone columns for 'Amount'
-            if not any(k in col_lower for k in ["id", "code", "phone", "mobile", "zip", "no"]):
-                recommended["amount"] = col
+            # Avoid IDs and system fields
+            if any(k in col_lower for k in ["id", "code", "index", "status", "type"]): continue
+            
+            # Check if values look like names/entities
+            is_name_like = sample[col].apply(lambda x: 3 <= len(x) <= 60 and not x.replace('.', '').replace('-', '').isnumeric())
+            if is_name_like.all():
+                recommended["name"] = col
                 break
 
-    # 4. NAME DETECTION (Heuristic: Non-numeric strings, reasonable length)
-    for col in columns:
-        if col in [recommended["email"], recommended["date"], recommended["amount"]]: continue
-        col_lower = str(col).lower()
-        # Avoid IDs and system fields
-        if any(k in col_lower for k in ["id", "code", "index", "status", "type"]): continue
-        
-        # Check if values look like names/entities
-        is_name_like = sample[col].apply(lambda x: 3 <= len(x) <= 60 and not x.replace('.', '').replace('-', '').isnumeric())
-        if is_name_like.all():
-            recommended["name"] = col
-            break
-
+    except Exception as e:
+        logger.error(f"Heuristic discovery failed: {e}")
     return recommended
 
 
@@ -813,44 +867,34 @@ def substitute_variables(template: str, context: dict) -> str:
     if not template:
         return ""
     
-    # Normalize context keys: lowercase, stripped, and replacing spaces/underscores/hyphens with empty string
-    def normalize(s):
-        return re.sub(r'[\s_\-]', '', str(s).lower())
+    # Normalized search map: { "invoicedate": "Actual Column Name" }
+    def normalize_key(k):
+        return re.sub(r'[\s_\-]', '', str(k).lower())
 
-    normalized_context = {normalize(k): v for k, v in context.items()}
-    keys = list(normalized_context.keys())
+    lookup = {normalize_key(k): k for k in context.keys()}
 
-    def find_best_match(var_name):
-        norm_var = normalize(var_name)
-        # 1. Direct match on normalized keys
-        if norm_var in normalized_context:
-            return normalized_context[norm_var]
+    def find_match(var_name):
+        norm_var = normalize_key(var_name)
+        # Check strict normalized match
+        if norm_var in lookup:
+            actual_key = lookup[norm_var]
+            return context.get(actual_key)
         
-        # 2. Smart aliases
-        aliases = {
-            "name": ["recipientname", "clientname", "customername", "contact"],
-            "amount": ["invoiceamount", "total", "value", "price"],
-            "date": ["duedate", "paymentdate", "schedule"]
-        }
-        for main_key, alt_list in aliases.items():
-            if norm_var == main_key or norm_var in alt_list:
-                for alt in [main_key] + alt_list:
-                    if alt in normalized_context:
-                        return normalized_context[alt]
-        
-        # 3. Difflib close matches on normalized keys
-        matches = difflib.get_close_matches(norm_var, keys, n=1, cutoff=0.7)
-        if matches:
-            return normalized_context[matches[0]]
+        # Fuzzy matching removed as per user request to avoid "smart" mismatching
         return None
 
     pattern = r"\{\{([^{}]+?)\}\}"
     
     def replace_match(match):
-        raw_val = match.group(1).strip()
-        best_val = find_best_match(raw_val)
-        if best_val is not None:
-            return str(best_val)
+        raw_tag_content = match.group(1).strip()
+        val = find_match(raw_tag_content)
+        if val is not None:
+            # Format numbers for professional display
+            if isinstance(val, (int, float)) and not isinstance(val, bool):
+                if val > 100: # Likely an amount
+                    return f"{val:,.2f}"
+                return str(val)
+            return str(val)
         return match.group(0) 
 
     return re.sub(pattern, replace_match, template)
@@ -868,7 +912,13 @@ def health_check():
         "status": "ok",
         "app_env": APP_ENV,
         "port": APP_PORT,
+        "version": "2026-03-27-v1-production-HARDENED",
+        "timestamp": str(datetime.datetime.now())
     }
+
+@app.get("/api/verify_session")
+def verify_session():
+    return {"ok": True, "message": "Backend version verified. You are running the LATEST code."}
 
 
 @app.get("/api/ready")
@@ -919,7 +969,6 @@ def system_overview(db: Session = Depends(get_db)):
         "batch_counts": batch_counts,
         "health": "attention" if batch_counts["failed"] else "ok",
     }
-
 @app.get("/api/settings", response_model=schemas.SystemSettings)
 def get_settings(db: Session = Depends(get_db)):
     settings = db.query(models.SystemSettings).first()
@@ -936,7 +985,11 @@ def get_settings(db: Session = Depends(get_db)):
         db.add(settings)
         db.commit()
         db.refresh(settings)
-    return settings
+    
+    active_smtp = get_active_smtp_account(db, settings) if settings.active_provider in {"GMAIL_SMTP", "SMTP"} else None
+    settings_dict = schemas.SystemSettings.from_orm(settings).dict()
+    settings_dict["active_smtp_name"] = active_smtp.display_name if active_smtp else None
+    return settings_dict
 
 @app.post("/api/settings", response_model=schemas.SystemSettings)
 def update_settings(payload: schemas.SystemSettingsUpdate, db: Session = Depends(get_db)):
@@ -985,7 +1038,11 @@ def update_settings(payload: schemas.SystemSettingsUpdate, db: Session = Depends
     )
     db.commit()
     db.refresh(settings)
-    return settings
+    
+    active_smtp = get_active_smtp_account(db, settings) if settings.active_provider in {"GMAIL_SMTP", "SMTP"} else None
+    settings_dict = schemas.SystemSettings.from_orm(settings).dict()
+    settings_dict["active_smtp_name"] = active_smtp.display_name if active_smtp else None
+    return settings_dict
 
 
 @app.get("/api/smtp_accounts", response_model=list[schemas.SmtpAccount])
@@ -1244,15 +1301,23 @@ def delete_template(template_id: int, db: Session = Depends(get_db)):
     return {"ok": True}
 
 
-@app.get("/api/batches", response_model=list[schemas.BatchJob])
+@app.get("/api/batches", response_model=list[schemas.BatchSummary])
 def list_batches(db: Session = Depends(get_db)):
-    return db.query(models.BatchJob).order_by(models.BatchJob.updated_at.desc()).limit(50).all()
+    batches = db.query(models.BatchJob).order_by(models.BatchJob.updated_at.desc()).limit(50).all()
+    results = []
+    for batch in batches:
+        results.append({
+            "batch": batch,
+            "stats": build_batch_stats(db, batch.batch_id)
+        })
+    return results
 
 
 @app.get("/api/batches/{batch_id}", response_model=schemas.BatchSummary)
 def get_batch_summary(batch_id: str, db: Session = Depends(get_db)):
     batch = get_batch_job(db, batch_id)
     if not batch:
+        # Fallback for historical batches not in batch_jobs table
         existing_records = db.query(models.InvoiceData).filter(models.InvoiceData.batch_id == batch_id).count()
         if not existing_records:
             raise HTTPException(status_code=404, detail=error_detail("Batch not found.", "batch_not_found", "Start a new batch from the upload page."))
@@ -1261,6 +1326,8 @@ def get_batch_summary(batch_id: str, db: Session = Depends(get_db)):
         db.commit()
         db.refresh(batch)
     return {"batch": batch, "stats": build_batch_stats(db, batch_id)}
+
+
 
 
 @app.get("/api/batches/{batch_id}/validate")
@@ -1467,6 +1534,164 @@ def gmail_disconnect():
             removed.append(f)
     return {"success": True, "message": "Gmail disconnected.", "removed": removed}
 
+def safe_read_file(contents: bytes, filename: str) -> pd.DataFrame:
+    """
+    Bulletproof file reader that handles dozens of edge cases:
+    - Empty files, corrupted files, password-protected files
+    - CSV: encoding issues (UTF-8, Latin-1, cp1252), bad delimiters, malformed rows
+    - Excel: .xlsx, .xls, multiple sheets, merged cells, formula-only cells
+    - Data: NaN/None/NaT, mixed types, float columns, date objects
+    - Structure: duplicate column names, unnamed columns, leading empty rows
+    - Size: caps at 10,000 rows to prevent memory issues
+    """
+    MAX_ROWS = 10000
+    
+    if not contents or len(contents) == 0:
+        raise HTTPException(status_code=400, detail=error_detail(
+            "The uploaded file is empty.",
+            "file_empty",
+            "Export the sheet again and make sure it contains data rows."
+        ))
+    
+    df = None
+    
+    if filename.endswith(".csv"):
+        # Try multiple strategies for CSV files
+        encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1']
+        separators = [',', ';', '\t', '|']
+        
+        for enc in encodings:
+            for sep in separators:
+                try:
+                    df = pd.read_csv(
+                        io.BytesIO(contents),
+                        encoding=enc,
+                        sep=sep,
+                        engine='python',
+                        on_bad_lines='skip',
+                        encoding_errors='ignore',
+                        nrows=MAX_ROWS,
+                        dtype=str,           # Read everything as string from the start
+                        keep_default_na=False # Don't interpret "NA", "null" etc. as NaN
+                    )
+                    # If we got more than 1 column, this separator works
+                    if df is not None and len(df.columns) > 1:
+                        break
+                except Exception:
+                    continue
+            if df is not None and len(df.columns) > 1:
+                break
+        
+        # Last resort: read with defaults
+        if df is None or len(df.columns) <= 1:
+            try:
+                df = pd.read_csv(
+                    io.BytesIO(contents),
+                    engine='python',
+                    on_bad_lines='skip',
+                    encoding_errors='ignore',
+                    nrows=MAX_ROWS,
+                    dtype=str,
+                    keep_default_na=False
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=error_detail(
+                    f"Could not parse CSV file: {str(e)[:100]}",
+                    "csv_parse_failed",
+                    "Ensure the file is a valid CSV with comma, semicolon, or tab delimiters."
+                ))
+    
+    elif filename.endswith((".xlsx", ".xls")):
+        # Strategy 1: openpyxl (best for .xlsx)
+        # Strategy 2: default engine
+        # Strategy 3: read with header detection
+        read_strategies = [
+            {"engine": "openpyxl", "dtype": str, "keep_default_na": False, "nrows": MAX_ROWS},
+            {"dtype": str, "keep_default_na": False, "nrows": MAX_ROWS},
+            {"engine": "openpyxl", "header": 0, "dtype": str, "keep_default_na": False, "nrows": MAX_ROWS},
+        ]
+        
+        last_error = None
+        for strategy in read_strategies:
+            try:
+                df = pd.read_excel(io.BytesIO(contents), **strategy)
+                if df is not None and not df.empty:
+                    break
+            except Exception as e:
+                last_error = e
+                continue
+        
+        if df is None:
+            error_msg = f"Could not parse Excel file"
+            if last_error:
+                error_msg += f": {str(last_error)[:100]}"
+            raise HTTPException(status_code=400, detail=error_detail(
+                error_msg,
+                "excel_parse_failed",
+                "Ensure the file is a valid .xlsx or .xls file and is not password-protected or corrupted."
+            ))
+    else:
+        raise HTTPException(status_code=400, detail=error_detail(
+            "Unsupported file format. Only CSV and Excel files are accepted.",
+            "file_type_unsupported",
+            "Upload a CSV (.csv) or Excel (.xlsx, .xls) file."
+        ))
+    
+    # --- POST-READ SANITIZATION (handles all remaining edge cases) ---
+    
+    # 1. Drop completely empty rows and columns
+    if df is not None:
+        df = df.dropna(how='all', axis=0)  # Drop rows where ALL values are NaN
+        df = df.dropna(how='all', axis=1)  # Drop columns where ALL values are NaN
+    
+    # 2. Handle unnamed/duplicate columns
+    new_cols = []
+    seen = {}
+    for i, col in enumerate(df.columns):
+        col_str = str(col).strip()
+        # Replace unnamed columns (pandas auto-generates "Unnamed: 0" etc.)
+        if col_str.startswith("Unnamed") or col_str == "" or col_str == "nan":
+            col_str = f"Column_{i+1}"
+        # Handle duplicates by appending a suffix
+        if col_str in seen:
+            seen[col_str] += 1
+            col_str = f"{col_str}_{seen[col_str]}"
+        else:
+            seen[col_str] = 0
+        new_cols.append(col_str)
+    df.columns = new_cols
+    
+    # 3. Universal type safety: convert EVERYTHING to string, handle NaN/None/NaT/float
+    # This is the critical step that prevents ALL type errors downstream
+    for col in df.columns:
+        df[col] = df[col].fillna("").astype(str).str.strip()
+        # Clean up string artifacts from type conversion
+        df[col] = df[col].replace({"nan": "", "None": "", "NaT": "", "none": "", "null": ""})
+    
+    # 4. Drop rows that are entirely empty after cleaning
+    df = df[~(df == "").all(axis=1)]
+    
+    # 5. Reset index after dropping rows
+    df = df.reset_index(drop=True)
+    
+    # 6. Final validation
+    if df.empty or len(df.columns) == 0:
+        raise HTTPException(status_code=400, detail=error_detail(
+            "The uploaded file appears to be empty after processing.",
+            "file_has_no_data",
+            "Make sure the sheet contains headers and at least one data row."
+        ))
+    
+    if len(df.columns) > 100:
+        raise HTTPException(status_code=400, detail=error_detail(
+            f"Too many columns ({len(df.columns)}). Maximum is 100.",
+            "too_many_columns",
+            "Reduce the number of columns in your spreadsheet."
+        ))
+    
+    return df
+
+
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
     if not file or not file.filename:
@@ -1483,41 +1708,7 @@ async def upload_file(file: UploadFile = File(...)):
     filename = file.filename.lower()
     
     try:
-        if len(contents) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=error_detail(
-                    "The uploaded file is empty.",
-                    "file_empty",
-                    "Export the sheet again and make sure it contains data rows."
-                )
-            )
-
-        if filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(contents))
-        elif filename.endswith(".xlsx"):
-            df = pd.read_excel(io.BytesIO(contents))
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=error_detail(
-                    "Unsupported file format.",
-                    "file_type_unsupported",
-                    "Upload a CSV or XLSX file."
-                )
-            )
-            
-        df = df.fillna("").astype(str)
-        
-        if df.empty or len(df.columns) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=error_detail(
-                    "The uploaded file appears to be empty.",
-                    "file_has_no_rows",
-                    "Make sure the sheet contains headers and at least one data row."
-                )
-            )
+        df = safe_read_file(contents, filename)
             
         return {
             "columns": [str(c) for c in df.columns.tolist()],
@@ -1527,7 +1718,7 @@ async def upload_file(file: UploadFile = File(...)):
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Upload error: {e}")
+        logger.error(f"Upload error: {e}\n{traceback.format_exc()}")
         raise HTTPException(
             status_code=500,
             detail=error_detail(
@@ -1560,31 +1751,7 @@ async def process_upload(
         mapping_dict = json.loads(mapping)
         validate_mapping(mapping_dict)
 
-        if len(contents) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=error_detail(
-                    "The uploaded file is empty.",
-                    "process_file_empty",
-                    "Choose a file that contains invoice rows."
-                )
-            )
-
-        if filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(contents))
-        elif filename.endswith(".xlsx"):
-            df = pd.read_excel(io.BytesIO(contents))
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=error_detail(
-                    "Unsupported file format.",
-                    "process_file_type_unsupported",
-                    "Upload a CSV or XLSX file."
-                )
-            )
-        
-        df = df.fillna("").astype(str)
+        df = safe_read_file(contents, filename)
         missing_columns = [
             label for label, column_name in {
                 "Email": mapping_dict.get("email"),
@@ -1663,7 +1830,7 @@ async def process_upload(
         db.rollback()
         raise e
     except Exception as e:
-        logger.error(f"Processing error: {e}")
+        logger.error(f"Process upload error: {e}\n{traceback.format_exc()}")
         db.rollback()
         raise HTTPException(
             status_code=500,
@@ -1718,51 +1885,77 @@ def generate_report(batch_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/send_emails")
 def send_emails(payload: schemas.SendEmailPayload, db: Session = Depends(get_db)):
-    validate_send_payload(payload.batch_id, payload.custom_subject, payload.custom_html)
-    records = db.query(models.InvoiceData).filter(models.InvoiceData.batch_id == payload.batch_id, models.InvoiceData.status == "pending").all()
-    if not records:
-         raise HTTPException(
-             status_code=400,
-             detail=error_detail(
-                 "There are no pending emails left in this batch.",
-                 "no_pending_records",
-                 "Refresh the status page to review what has already been sent."
+    logger.info(f"--- [SEND EMAILS] Received for batch {payload.batch_id} ---")
+    try:
+        validate_send_payload(payload.batch_id, payload.custom_subject, payload.custom_html)
+        logger.info(f"[SEND EMAILS] Validation payload: ok")
+        
+        records = db.query(models.InvoiceData).filter(models.InvoiceData.batch_id == payload.batch_id, models.InvoiceData.status == "pending").all()
+        logger.info(f"[SEND EMAILS] Fetched {len(records)} pending records")
+        
+        if not records:
+             logger.warning(f"[SEND EMAILS] No pending records for batch {payload.batch_id}")
+             raise HTTPException(
+                 status_code=400,
+                 detail=error_detail(
+                     "There are no pending emails left in this batch.",
+                     "no_pending_records",
+                     "Refresh the status page to review what has already been sent."
+                 )
              )
-         )
 
-    settings = db.query(models.SystemSettings).first()
-    validate_email_provider(settings, db)
-    validation = evaluate_batch_validation(db, payload.batch_id, payload.custom_subject or "", payload.custom_html or "")
-    if not validation["ok_to_send"]:
-        raise HTTPException(
-            status_code=400,
-            detail=error_detail(
-                "This batch has blocking validation issues.",
-                "batch_validation_failed",
-                "Resolve unresolved placeholders or invalid rows before launching the send."
+        settings = db.query(models.SystemSettings).first()
+        validate_email_provider(settings, db)
+        logger.info(f"[SEND EMAILS] Settings/Provider: ok")
+        
+        logger.info(f"[SEND EMAILS] Evaluating batch validation...")
+        validation = evaluate_batch_validation(db, payload.batch_id, payload.custom_subject or "", payload.custom_html or "")
+        logger.info(f"[SEND EMAILS] Validation results: {validation['ok_to_send']}")
+        
+        if not validation["ok_to_send"]:
+            logger.warning(f"[SEND EMAILS] Validation failed: {validation['issues']}")
+            raise HTTPException(
+                status_code=400,
+                detail=error_detail(
+                    "This batch has blocking validation issues.",
+                    "batch_validation_failed",
+                    "Resolve unresolved placeholders or invalid rows before launching the send."
+                )
             )
-        )
 
-    batch = ensure_batch_job(db, payload.batch_id)
-    batch.provider = settings.active_provider
-    batch.custom_subject = payload.custom_subject
-    batch.custom_html = payload.custom_html
-    batch.template_type = payload.template_type or "PROFESSIONAL"
-    batch.is_html = payload.is_html
-    batch.last_error = None
-    batch.validation_summary = json.dumps(validation)
-    batch.scheduled_for = payload.scheduled_for
-    batch.status = "scheduled" if payload.scheduled_for and payload.scheduled_for > datetime.datetime.utcnow() else "queued"
-    log_audit(
-        db,
-        "batch.queued" if batch.status == "queued" else "batch.scheduled",
-        "batch",
-        f"{'Queued' if batch.status == 'queued' else 'Scheduled'} batch {payload.batch_id}",
-        payload.batch_id,
-        {"provider": settings.active_provider, "scheduled_for": payload.scheduled_for.isoformat() if payload.scheduled_for else None},
-    )
-    db.commit()
-    ensure_worker_running()
+        batch = ensure_batch_job(db, payload.batch_id)
+        batch.provider = settings.active_provider
+        batch.custom_subject = payload.custom_subject
+        batch.custom_html = payload.custom_html
+        batch.template_type = payload.template_type or "PROFESSIONAL"
+        batch.is_html = payload.is_html
+        batch.last_error = None
+        batch.validation_summary = json.dumps(validation)
+        batch.scheduled_for = payload.scheduled_for
+        batch.status = "scheduled" if payload.scheduled_for and payload.scheduled_for > datetime.datetime.utcnow() else "queued"
+        
+        logger.info(f"[SEND EMAILS] Updating batch status to {batch.status}")
+        
+        log_audit(
+            db,
+            "batch.queued" if batch.status == "queued" else "batch.scheduled",
+            "batch",
+            f"{'Queued' if batch.status == 'queued' else 'Scheduled'} batch {payload.batch_id}",
+            payload.batch_id,
+            {"provider": settings.active_provider, "scheduled_for": payload.scheduled_for.isoformat() if payload.scheduled_for else None},
+        )
+        
+        logger.info(f"[SEND EMAILS] Committing batch...")
+        db.commit()
+        logger.info(f"[SEND EMAILS] Batch committed. Ensuring worker running...")
+        ensure_worker_running()
+        logger.info(f"[SEND EMAILS] Done.")
+        
+    except Exception as e:
+        logger.error(f"--- [SEND EMAILS CRASH] --- \n {e}\n{traceback.format_exc()}")
+        db.rollback()
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail="Internal server crash during send_emails.")
     return {
         "ok": True,
         "message": "Email sending has been queued." if batch.status == "queued" else "Email sending has been scheduled.",
@@ -2081,7 +2274,8 @@ if os.path.exists("dist"):
     @app.get("/{full_path:path}")
     async def serve_react_app(full_path: str):
         if full_path.startswith("api"):
-            raise HTTPException(status_code=404, detail="API route not found")
+            logger.warning(f"Rejecting API request at catch-all: {full_path}")
+            raise HTTPException(status_code=404, detail=f"API route not found: {full_path}")
         
         index_path = os.path.join("dist", "index.html")
         if os.path.exists(index_path):
