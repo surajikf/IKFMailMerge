@@ -1,4 +1,5 @@
 import sib_api_v3_sdk
+import base64
 from sib_api_v3_sdk.rest import ApiException
 import os
 from dotenv import load_dotenv
@@ -15,10 +16,16 @@ class BrevoService:
         self.configuration.api_key['api-key'] = self.api_key
         self.api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(self.configuration))
 
-    def send_email(self, to_email: str, subject: str, html_content: str, sender_name: str = "IKF Outreach", sender_email: str = "noreply@ikf.in"):
+    def send_email(self, to_email: str, subject: str, html_content: str, sender_name: str = "IKF Outreach", sender_email: str = "noreply@ikf.in", attachments=None):
         sender = {"name": sender_name, "email": sender_email}
         to = [{"email": to_email}]
         reply_to = {"email": sender_email, "name": sender_name}
+        brevo_attachments = []
+        for item in (attachments or []):
+            brevo_attachments.append({
+                "name": item.get("filename") or "attachment.bin",
+                "content": base64.b64encode(item.get("content_bytes") or b"").decode("ascii"),
+            })
         
         send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
             to=to,
@@ -26,7 +33,8 @@ class BrevoService:
             headers={"Some-Custom-Name": "unique-id-1234"},
             html_content=html_content,
             sender=sender,
-            subject=subject
+            subject=subject,
+            attachment=brevo_attachments or None,
         )
 
         try:

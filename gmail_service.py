@@ -36,12 +36,21 @@ class GmailService:
                 
         return build('gmail', 'v1', credentials=creds)
 
-    def send_email(self, to_email: str, subject: str, body: str):
+    def send_email(self, to_email: str, subject: str, body: str, attachments=None):
         message = EmailMessage()
         message.add_alternative(body, subtype='html')
         message['To'] = to_email
         message['From'] = "me"
         message['Subject'] = subject
+        for item in (attachments or []):
+            mime = str(item.get("mime_type") or "application/octet-stream")
+            maintype, subtype = (mime.split("/", 1) + ["octet-stream"])[:2]
+            message.add_attachment(
+                item.get("content_bytes") or b"",
+                maintype=maintype,
+                subtype=subtype,
+                filename=item.get("filename") or "attachment.bin",
+            )
 
         encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
         create_message = {

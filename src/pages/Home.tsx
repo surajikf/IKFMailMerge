@@ -20,7 +20,7 @@ export default function Home() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    document.title = "IKF MailMerge | Command Center";
+    document.title = "IKF MailMerge | Home";
   }, []);
   const [stats, setStats] = useState({ total_sent: 0, loading: true });
 
@@ -38,15 +38,15 @@ export default function Home() {
       <Box className="hero-canvas" sx={{ py: 12 }}>
          <Box className="hero-eyebrow" sx={{ mb: 4 }}>
             <Sparkles fontSize="small" /> 
-            Intelligent Outreach Engine
+            Easy Email Sending
          </Box>
          
          <Typography className="hero-title" variant="h1" sx={{ maxWidth: 800, mx: 'auto', mb: 3 }}>
-            Precision and reach, <span style={{ color: 'var(--primary)' }}>perfectly balanced.</span>
+            Send reminder emails <span style={{ color: 'var(--primary)' }}>quickly and clearly.</span>
          </Typography>
          
          <Typography variant="body1" sx={{ color: 'var(--text-muted)', maxWidth: 600, mx: 'auto', mb: 6, fontSize: '1.25rem', lineHeight: 1.6 }}>
-            Redefining engagement with a smart, process-driven outreach experience. Built for enterprises that value impact over volume.
+            Upload your file, write your email, preview it, and send.
          </Typography>
 
          <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2 }}>
@@ -57,7 +57,7 @@ export default function Home() {
                 startIcon={<LaunchIcon />}
                 sx={{ px: 6, py: 2, fontSize: '1.1rem' }}
             >
-                Launch New Process
+                Start New Email
             </Button>
             <Button 
                 variant="outlined" 
@@ -65,7 +65,7 @@ export default function Home() {
                 onClick={() => navigate('/dashboard')}
                 sx={{ borderRadius: 999, px: 4, fontWeight: 500 }}
             >
-                View Monitor
+                View Status
             </Button>
          </Box>
       </Box>
@@ -76,8 +76,8 @@ export default function Home() {
             <Paper className="studio-card" sx={{ p: 4, position: 'relative' }}>
                <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={4}>
                   <Box>
-                     <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>Historical Impact</Typography>
-                     <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>TOTAL DELIVERIES</Typography>
+                     <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>Emails Sent</Typography>
+                     <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>TOTAL SENT</Typography>
                   </Box>
                   <TrendingUp color="primary" sx={{ fontSize: 32, opacity: 0.2 }} />
                </Box>
@@ -85,10 +85,10 @@ export default function Home() {
                {stats.loading ? <CircularProgress size={24} /> : (
                   <Typography variant="h3" sx={{ fontWeight: 600, mb: 1 }}>{stats.total_sent.toLocaleString()}</Typography>
                )}
-               <Typography variant="body2" sx={{ color: 'var(--text-muted)' }}>Precision emails landed in inboxes across your global network.</Typography>
+               <Typography variant="body2" sx={{ color: 'var(--text-muted)' }}>Total emails sent from this app.</Typography>
                
                <Box mt={4}>
-                  <Button endIcon={<ChevronRight />} onClick={() => navigate('/dashboard')} sx={{ fontWeight: 500, p: 0 }}>Review Full History</Button>
+                  <Button endIcon={<ChevronRight />} onClick={() => navigate('/dashboard')} sx={{ fontWeight: 500, p: 0 }}>View Full History</Button>
                </Box>
             </Paper>
          </Grid>
@@ -96,14 +96,14 @@ export default function Home() {
          <Grid item xs={12} md={6}>
             <Paper className="studio-card" sx={{ p: 4 }}>
                <Box>
-                  <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>Smart Diagnostics</Typography>
-                  <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>SYSTEM STATE</Typography>
+                  <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>System Status</Typography>
+                  <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 500, textTransform: 'uppercase' }}>CURRENT STATE</Typography>
                </Box>
                
                <Box sx={{ mt: 4, display: 'grid', gap: 2.5 }}>
                   {[
-                    { label: 'Cloud Connectivity', status: 'Optimal' },
-                    { label: 'Security Protocols', status: 'Secured' },
+                    { label: 'Server Connection', status: 'Good' },
+                    { label: 'Security', status: 'On' },
                     { label: 'SMTP Bridge', status: 'Active' },
                   ].map((s) => (
                     <Box key={s.label} display="flex" justifyContent="space-between" alignItems="center">
@@ -117,7 +117,7 @@ export default function Home() {
                </Box>
 
                <Box mt={4}>
-                  <Button endIcon={<ChevronRight />} onClick={() => navigate('/settings')} sx={{ fontWeight: 500, p: 0 }}>Configure Channels</Button>
+                  <Button endIcon={<ChevronRight />} onClick={() => navigate('/settings')} sx={{ fontWeight: 500, p: 0 }}>Open Settings</Button>
                </Box>
             </Paper>
          </Grid>

@@ -67,6 +67,19 @@ class SystemSettingsUpdate(BaseModel):
     email_template_is_html: Optional[bool] = None
     active_smtp_name: Optional[str] = None
 
+class CampaignPacingPayload(BaseModel):
+    enabled: bool = False
+    start_at: Optional[datetime] = None
+    end_at: Optional[datetime] = None
+    slot_minutes: int = 60
+    min_per_slot: int = 100
+    max_per_slot: int = 200
+    randomize: bool = True
+    weekdays_only: bool = False
+    daily_start_hour: Optional[int] = None
+    daily_end_hour: Optional[int] = None
+
+
 class SendEmailPayload(BaseModel):
     batch_id: str
     template_type: Optional[str] = "PROFESSIONAL" # PROFESSIONAL, CREATIVE
@@ -74,6 +87,38 @@ class SendEmailPayload(BaseModel):
     custom_html: Optional[str] = None
     is_html: bool = True
     scheduled_for: Optional[datetime] = None
+    campaign_pacing: Optional[CampaignPacingPayload] = None
+
+
+class RecipientUpdatePayload(BaseModel):
+    recipient_name: Optional[str] = None
+    email_address: Optional[str] = None
+    invoice_amount: Optional[str] = None
+    due_date: Optional[str] = None
+
+
+class RecipientSendModePayload(BaseModel):
+    mode: str  # single | selected | all_pending
+    invoice_id: Optional[int] = None
+    invoice_ids: Optional[list[int]] = None
+    custom_subject: Optional[str] = None
+    custom_html: Optional[str] = None
+    is_html: bool = True
+    template_type: Optional[str] = "PROFESSIONAL"
+
+
+class PurgeAllBatchesPayload(BaseModel):
+    """Must match exactly; prevents accidental wipes."""
+    confirm: str
+
+
+class RecipientListResponse(BaseModel):
+    items: list[Invoice]
+    total: int
+    pending: int
+    success: int
+    failed: int
+    partial: int
 
 class TestEmailPayload(BaseModel):
     batch_id: str
@@ -145,6 +190,18 @@ class BatchJob(BatchJobBase):
 class BatchSummary(BaseModel):
     batch: BatchJob
     stats: dict[str, Any]
+
+
+class BatchAttachment(BaseModel):
+    id: int
+    batch_id: str
+    original_filename: str
+    mime_type: Optional[str] = None
+    file_size: int
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
 
 
 class EmailTemplateBase(BaseModel):

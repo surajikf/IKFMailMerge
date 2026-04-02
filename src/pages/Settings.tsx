@@ -8,12 +8,11 @@ import {
   CircularProgress,
   Button,
   Paper,
-  IconButton
 } from '@mui/material';
 import {
-  Visibility,
-  VisibilityOff, Dns, Badge, Google
+  Dns, Badge, Google
 } from '@mui/icons-material';
+import { Grid, Chip } from '@mui/material';
 
 const API_BASE = '/api';
 
@@ -36,7 +35,6 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [, setCheckingGmail] = useState(false);
-  const [showSecret, setShowSecret] = useState(false);
   const [gmailStatus, setGmailStatus] = useState({ credentials: false, authenticated: false, status: 'Checking...', has_db_credentials: false });
   const [settings, setSettings] = useState({
     active_provider: 'GMAIL',
@@ -62,8 +60,6 @@ export default function Settings() {
       setGmailStatus(res.data);
     } catch (err) {
       setGmailStatus({ credentials: false, authenticated: false, status: 'Error checking Gmail status.', has_db_credentials: false });
-    } finally {
-      setCheckingGmail(false);
     }
   };
 
@@ -86,6 +82,13 @@ export default function Settings() {
 
   const handleSave = async () => {
     setSaving(true);
+    // Senior QA Resilience: Malformed Guard
+    if (settings.active_provider === 'BREVO' && settings.brevo_api_key.length < 10) {
+       Swal.fire({ icon: 'warning', title: 'Invalid API Key', text: 'The Brevo API key appears malformed or too short.' });
+       setSaving(false);
+       return;
+    }
+
     try {
       await axios.post(`${API_BASE}/settings`, settings);
       Toast.fire({
@@ -106,43 +109,6 @@ export default function Settings() {
     }
   };
 
-  const handleConnectGmail = async () => {
-    if (!settings.gmail_client_id || !settings.gmail_client_secret) {
-      Swal.fire({
-        icon: 'warning',
-        title: 'Missing Credentials',
-        text: 'Please enter and save your Client ID and Client Secret first.',
-        background: '#ffffff',
-        color: '#0f172a'
-      });
-      return;
-    }
-    setConnecting(true);
-    try {
-      // Save credentials first
-      await axios.post(`${API_BASE}/settings`, {
-        gmail_client_id: settings.gmail_client_id,
-        gmail_client_secret: settings.gmail_client_secret,
-      });
-      // Initiate OAuth
-      const res = await axios.post(`${API_BASE}/gmail/auth`);
-      Toast.fire({
-        icon: 'success',
-        title: res.data.message || 'Gmail connected!'
-      });
-      checkGmail();
-    } catch (err: any) {
-      Swal.fire({
-        icon: 'error',
-        title: 'Connection Failed',
-        text: err.response?.data?.detail || 'OAuth flow failed. Check your credentials.',
-        background: '#ffffff',
-        color: '#0f172a'
-      });
-    } finally {
-      setConnecting(false);
-    }
-  };
 
   const handleDisconnectGmail = async () => {
     const result = await Swal.fire({
@@ -185,99 +151,117 @@ export default function Settings() {
   const statusColor = gmailStatus.authenticated ? 'var(--success)' : (gmailStatus.credentials ? '#f59e0b' : '#94a3b8');
 
   return (
-    <Box className="studio-canvas" sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'studioFadeUp 0.8s' }}>
-      <Box sx={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', pr: 2, '&::-webkit-scrollbar': { width: '6px' }, '&::-webkit-scrollbar-thumb': { bgcolor: 'var(--surface-divider)', borderRadius: '10px' } }}>
-        <Box sx={{ maxWidth: '900px', width: '100%', pt: 2, pb: 8 }}>
-          <Box mb={6} sx={{ textAlign: 'center' }}>
-            <Box className="hero-eyebrow" sx={{ mb: 2, display: 'inline-block' }}>SYSTEM ARCHITECTURE</Box>
-            <Typography variant="h3" sx={{ mb: 1, fontWeight: 800, letterSpacing: '-0.03em' }}>Global Configuration</Typography>
-            <Typography variant="body1" sx={{ color: 'var(--text-muted)', fontWeight: 500 }}>Manage your delivery channels and enterprise application protocols.</Typography>
-          </Box>
+    <Box sx={{ animation: 'studioFadeUp 0.8s', maxWidth: 1000, mx: 'auto', p: 4 }}>
+      <Box sx={{ mb: 6, display: 'flex', alignItems: 'center', gap: 2 }}>
+         <Dns color="primary" sx={{ fontSize: 32 }} />
+         <Box>
+            <Typography variant="h4" sx={{ fontWeight: 900, letterSpacing: '-0.04em' }}>Email Settings</Typography>
+            <Typography variant="body2" sx={{ color: 'var(--text-muted)', fontWeight: 600 }}>Set sender name, sender email, and Gmail connection.</Typography>
+         </Box>
+      </Box>
 
-          <Box display="grid" gap={4}>
-            {/* Active Provider Section */}
-            <Paper variant="outlined" sx={{ p: 4, borderRadius: '28px', border: '1.5px solid var(--surface-divider)', boxShadow: '0 10px 30px rgba(0,0,0,0.02)' }}>
-              <Typography variant="subtitle2" sx={{ mb: 3, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 1.5, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-                <Dns sx={{ fontSize: 20 }} /> DELIVERY CHANNEL
-              </Typography>
-              <Box display="flex" gap={2}>
-                {['GMAIL', 'BREVO'].map((p) => (
-                  <Box
-                    key={p}
-                    onClick={() => setSettings({ ...settings, active_provider: p })}
-                    sx={{
-                      flex: 1,
-                      p: 3,
-                      borderRadius: '20px',
-                      border: '2px solid',
-                      borderColor: settings.active_provider === p ? 'var(--primary)' : 'var(--surface-border)',
-                      bgcolor: settings.active_provider === p ? 'var(--primary-glow)' : 'white',
-                      cursor: 'pointer',
-                      transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-                      textAlign: 'center',
-                      '&:hover': { transform: 'translateY(-2px)', boxShadow: '0 10px 20px rgba(0,0,0,0.05)' }
-                    }}
-                  >
-                    <Typography variant="h6" sx={{ fontWeight: 900, color: settings.active_provider === p ? 'var(--primary)' : 'var(--text-main)', mb: 0.5 }}>{p}</Typography>
-                    <Typography variant="caption" sx={{ fontWeight: 600, color: 'var(--text-muted)' }}>{p === 'GMAIL' ? 'Personal / Workspace' : 'Enterprise SMTP'}</Typography>
+      <Grid container spacing={4}>
+         {/* 1. Identity Architecture */}
+         <Grid item xs={12} md={6}>
+            <Paper variant="outlined" sx={{ p: 4, borderRadius: '24px', border: '1.5px solid var(--surface-divider)', height: '100%', bgcolor: 'white', boxShadow: 'var(--studio-shadow-sm)', transition: 'all 0.3s ease', '&:hover': { borderColor: 'var(--primary)', transform: 'translateY(-4px)' } }}>
+               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 4 }}>
+                  <Badge color="primary" />
+                  <Typography variant="h6" sx={{ fontWeight: 800 }}>Sender Details</Typography>
+               </Box>
+               <TextField 
+                  fullWidth 
+                  label="Display Name" 
+                  variant="filled"
+                  value={settings.brevo_sender_name} 
+                  onChange={e => setSettings({ ...settings, brevo_sender_name: e.target.value })} 
+                  sx={{ mb: 3, '& .MuiFilledInput-root': { borderRadius: '12px', bgcolor: 'var(--bg-studio)' } }} 
+               />
+               <TextField 
+                  fullWidth 
+                  label="Sender Email" 
+                  variant="filled"
+                  value={settings.brevo_sender_email} 
+                  onChange={e => setSettings({ ...settings, brevo_sender_email: e.target.value })} 
+                  sx={{ mb: 3, '& .MuiFilledInput-root': { borderRadius: '12px', bgcolor: 'var(--bg-studio)' } }} 
+               />
+               <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 500, display: 'block', mt: 1 }}>
+                  Recipients will see this name and email.
+               </Typography>
+            </Paper>
+         </Grid>
+
+         {/* 2. Connectivity Protocols (Gmail API) */}
+         <Grid item xs={12} md={6}>
+            <Paper variant="outlined" sx={{ p: 4, borderRadius: '24px', border: '1.5px solid var(--surface-divider)', height: '100%', bgcolor: 'white', boxShadow: 'var(--studio-shadow-sm)', transition: 'all 0.3s ease', '&:hover': { borderColor: 'var(--primary)', transform: 'translateY(-4px)' } }}>
+               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 4 }}>
+                  <Google color="primary" />
+                  <Typography variant="h6" sx={{ fontWeight: 800 }}>Gmail Connection</Typography>
+               </Box>
+               
+               <Box sx={{ p: 3, bgcolor: 'var(--bg-studio)', borderRadius: '20px', mb: 4, border: '1px solid var(--surface-divider)' }}>
+                  <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                     <Typography variant="caption" sx={{ fontWeight: 900, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>CONNECTION STATUS</Typography>
+                     <Chip 
+                        label={gmailStatus.authenticated ? 'ACTIVE' : 'INACTIVE'} 
+                        size="small" 
+                        color={gmailStatus.authenticated ? 'success' : 'default'} 
+                        sx={{ height: 20, fontSize: '0.6rem', fontWeight: 900, borderRadius: '6px' }} 
+                     />
                   </Box>
-                ))}
-              </Box>
+                  <Typography variant="body1" sx={{ fontWeight: 800, color: gmailStatus.authenticated ? 'var(--success)' : 'var(--text-main)', letterSpacing: '-0.01em' }}>
+                     {gmailStatus.status}
+                  </Typography>
+               </Box>
+
+               {gmailStatus.authenticated ? (
+                  <Button 
+                     fullWidth 
+                     variant="outlined" 
+                     color="error"
+                     size="large"
+                     onClick={handleDisconnectGmail}
+                     sx={{ py: 1.8, borderRadius: '16px', fontWeight: 900, border: '2px solid' }}
+                  >
+                     Disconnect Gmail
+                  </Button>
+               ) : (
+                  <Button 
+                     fullWidth 
+                     variant="contained" 
+                     className="btn-studio"
+                     size="large"
+                     startIcon={connecting ? <CircularProgress size={18} color="inherit" /> : <Google />}
+                     onClick={async () => {
+                        setConnecting(true);
+                        try { const res = await axios.post(`${API_BASE}/gmail/auth`); window.location.href = res.data.url; }
+                        catch(err) { Toast.fire({ icon: 'error', title: 'Auth Link Failed' }); }
+                        finally { setConnecting(false); }
+                     }}
+                     disabled={connecting}
+                     sx={{ py: 1.8, borderRadius: '16px', fontWeight: 900 }}
+                  >
+                     {connecting ? 'Connecting...' : 'Connect Gmail'}
+                  </Button>
+               )}
             </Paper>
+         </Grid>
 
-            {/* Brevo Settings */}
-            <Paper variant="outlined" sx={{ p: 4, borderRadius: '28px', border: '1.5px solid var(--surface-divider)', boxShadow: '0 10px 30px rgba(0,0,0,0.02)' }}>
-              <Typography variant="subtitle2" sx={{ mb: 3, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 1.5, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-                <Badge sx={{ fontSize: 20 }} /> BREVO CONFIGURATION
-              </Typography>
-
-              <Box display="grid" gap={3}>
-                <TextField
-                  fullWidth
-                  label="Brevo API Key"
-                  type="password"
-                  variant="filled"
-                  value={settings.brevo_api_key}
-                  onChange={(e) => setSettings({ ...settings, brevo_api_key: e.target.value })}
-                  sx={{ '& .MuiFilledInput-root': { borderRadius: '12px', bgcolor: 'var(--bg-studio)' } }}
-                />
-                <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
-                  <TextField
-                    label="Sender Name"
-                    variant="filled"
-                    value={settings.brevo_sender_name}
-                    onChange={(e) => setSettings({ ...settings, brevo_sender_name: e.target.value })}
-                    sx={{ '& .MuiFilledInput-root': { borderRadius: '12px', bgcolor: 'var(--bg-studio)' } }}
-                  />
-                  <TextField
-                    label="Sender Email"
-                    variant="filled"
-                    value={settings.brevo_sender_email}
-                    onChange={(e) => setSettings({ ...settings, brevo_sender_email: e.target.value })}
-                    sx={{ '& .MuiFilledInput-root': { borderRadius: '12px', bgcolor: 'var(--bg-studio)' } }}
-                  />
-                </Box>
-              </Box>
-            </Paper>
-
-            {/* Gmail Settings */}
-            <Paper variant="outlined" sx={{ p: 4, borderRadius: '28px', border: '1.5px solid var(--surface-divider)', boxShadow: '0 10px 30px rgba(0,0,0,0.02)' }}>
-              <Typography variant="subtitle2" sx={{ mb: 3, fontWeight: 800, display: 'flex', alignItems: 'center', gap: 1.5, color: 'var(--text-muted)', letterSpacing: '0.05em' }}>
-                <Google sx={{ fontSize: 20 }} /> GOOGLE CONSOLE CREDENTIALS
-              </Typography>
-              <Box display="grid" gap={3}>
-                <TextField
-                  fullWidth
-                  label="Gmail Client ID"
-                  variant="filled"
-                  value={settings.gmail_client_id}
-                  onChange={(e) => setSettings({ ...settings, gmail_client_id: e.target.value })}
-                  sx={{ '& .MuiFilledInput-root': { borderRadius: '12px', bgcolor: 'var(--bg-studio)' } }}
-                />
-                <TextField
-                  fullWidth
-                  label="Gmail Client Secret"
-                  type={showSecret ? 'text' : 'password'}
-                  variant="filled"
-                  value={settings.gmail_client_secret}
- 
+         {/* 3. Global Orchestration Footer */}
+         <Grid item xs={12}>
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+               <Button 
+                  variant="contained" 
+                  className="btn-studio" 
+                  size="large"
+                  onClick={handleSave} 
+                  disabled={saving}
+                  sx={{ minWidth: 280, py: 2.2, fontSize: '1.1rem', fontWeight: 900, borderRadius: '20px', boxShadow: `0 15px 35px ${statusColor}44` }}
+               >
+                  {saving ? <CircularProgress size={22} color="inherit" /> : 'Save Settings'}
+               </Button>
+            </Box>
+         </Grid>
+      </Grid>
+    </Box>
+  );
+}

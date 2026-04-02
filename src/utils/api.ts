@@ -1,5 +1,14 @@
 import axios from 'axios';
 
+/** When the server sets ADMIN_ACCESS_TOKEN, build with VITE_ADMIN_ACCESS_TOKEN so API calls include X-Admin-Key. */
+export function getAdminHeaders(): Record<string, string> {
+  const key = (import.meta as any)?.env?.VITE_ADMIN_ACCESS_TOKEN as string | undefined;
+  if (key && String(key).trim()) {
+    return { 'X-Admin-Key': String(key).trim() };
+  }
+  return {};
+}
+
 type BackendDetail = {
   message?: string;
   code?: string;

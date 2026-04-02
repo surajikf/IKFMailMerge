@@ -1,0 +1,1 @@
+[["/api/version", ["GET"]], ["/api/batches/{batch_id}/recipients/send", ["POST"]]]

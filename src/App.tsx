@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { 
   Box, 
@@ -10,6 +10,7 @@ import {
   CircularProgress, 
   Container,
   Typography,
+  Button,
 } from '@mui/material';
 import {
   AddCircleOutline as StartIcon,
@@ -49,18 +50,19 @@ const SystemStatusBadge = () => {
                 display: 'flex', 
                 alignItems: 'center', 
                 gap: 1.5, 
-                px: 2, 
-                py: 0.75,
-                bgcolor: isActive ? 'var(--success-glow)' : 'var(--surface-divider)',
+                px: 2.25, 
+                py: 0.9,
+                bgcolor: isActive ? 'rgba(236, 253, 245, 0.95)' : 'rgba(248, 250, 252, 0.95)',
                 borderRadius: '999px',
                 border: '1px solid',
-                borderColor: isActive ? 'rgba(16, 185, 129, 0.2)' : 'var(--surface-border)',
-                cursor: 'pointer',
+                borderColor: isActive ? 'rgba(16, 185, 129, 0.28)' : 'rgba(226, 232, 240, 0.95)',
+                boxShadow: '0 2px 10px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255,255,255,0.85)',
+                cursor: 'default',
                 transition: 'all 0.3s ease',
-                '&:hover': { transform: 'translateY(-1px)', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }
+                '&:hover': { transform: 'translateY(-1px)', boxShadow: '0 4px 14px rgba(15, 23, 42, 0.07)' }
             }}>
                 <Box className={isActive ? "status-pulse" : ""} sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: isActive ? 'var(--success)' : 'var(--text-muted)' }} />
-                <Typography variant="caption" sx={{ fontWeight: 700, color: isActive ? 'var(--text-main)' : 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em', fontSize: '0.6rem' }}>
+                <Typography variant="caption" sx={{ fontWeight: 700, color: isActive ? '#0f172a' : '#64748b', letterSpacing: '0.04em', fontSize: { xs: '0.68rem', md: '0.72rem' } }}>
                     {label}
                 </Typography>
             </Box>
@@ -71,10 +73,31 @@ const SystemStatusBadge = () => {
 const AppLayout = ({ children }: { children: React.ReactNode }) => {
     const [scrolled, setScrolled] = useState(false);
 
+    const location = useLocation();
+    
+    // Senior QA: Smart Presence (Dynamic Tab Titles)
     useEffect(() => {
+        const routeMap: Record<string, string> = {
+            '/': 'Email Builder',
+            '/dashboard': 'Email Status',
+            '/settings': 'Settings'
+        };
+        const title = routeMap[location.pathname] || 'MailMerge Studio';
+        document.title = `IKF | ${title}`;
+    }, [location.pathname]);
+
+    // Senior QA: Global Safety Net (Logical Error Catching)
+    useEffect(() => {
+        const handleError = (e: ErrorEvent) => {
+            console.error("Studio Runtime Exception:", e.error);
+        };
+        window.addEventListener('error', handleError);
         const handleScroll = () => setScrolled(window.scrollY > 20);
         window.addEventListener('scroll', handleScroll, { passive: true });
-        return () => window.removeEventListener('scroll', handleScroll);
+        return () => {
+            window.removeEventListener('error', handleError);
+            window.removeEventListener('scroll', handleScroll);
+        };
     }, []);
 
     return (
@@ -82,7 +105,21 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
             <header className={`studio-header ${scrolled ? 'scrolled' : ''}`}>
                 <Container maxWidth={false} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: { xs: 2, md: 6 } }}>
                     {/* Logo Area */}
-                    <Box component={Link} to="/" sx={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 2 }}>
+                    {/* Logo Area: High-Precision Reset Control */}
+                    <Box 
+                        onClick={() => {
+                            localStorage.removeItem('ikf_mailmerge_session');
+                            window.location.href = '/';
+                        }}
+                        sx={{ 
+                            textDecoration: 'none', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: 2, 
+                            cursor: 'pointer',
+                            '&:hover img': { transform: 'scale(1.1) rotate(-3deg)' }
+                        }}
+                    >
                         <Box 
                             component="img" 
                             src="/ikf.png" 
@@ -91,29 +128,22 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
                                 height: { xs: 24, md: 32 }, 
                                 width: 'auto',
                                 filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.05))',
-                                transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)',
-                                '&:hover': { transform: 'scale(1.1) rotate(-3deg)' }
+                                transition: 'transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1)'
                             }} 
                         />
-                        <Box sx={{ borderLeft: '1.5px solid var(--surface-divider)', pl: 2, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <Typography variant="subtitle2" sx={{ fontWeight: 800, color: 'var(--text-main)', lineHeight: 1, letterSpacing: '-0.02em', fontSize: '1rem' }}>IKF</Typography>
-                              <Box className="studio-badge">STUDIO</Box>
-                           </Box>
-                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                              <Typography variant="caption" sx={{ fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.15em', fontSize: '0.55rem' }}>MailMerge Engine</Typography>
-                              <Box sx={{ width: 3, height: 3, borderRadius: '50%', bgcolor: 'var(--surface-border)' }} />
-                              <Typography variant="caption" sx={{ fontWeight: 700, color: 'var(--primary)', fontSize: '0.55rem', opacity: 0.8 }}>V2.0</Typography>
-                           </Box>
+                        <Box sx={{ borderLeft: '2px solid rgba(226, 232, 240, 0.95)', pl: 2, display: 'flex', alignItems: 'center' }}>
+                           <Typography variant="subtitle2" sx={{ fontWeight: 800, color: '#0f172a', lineHeight: 1.1, letterSpacing: '-0.03em', fontSize: { xs: '1.05rem', md: '1.15rem' } }}>
+                              IKF Mail Merge
+                           </Typography>
                         </Box>
                     </Box>
 
                     {/* Centered Navigation */}
                     <nav className="nav-container" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
                         {[
-                            { path: '/', label: 'Process', icon: <StartIcon sx={{ fontSize: 16 }} /> },
-                            { path: '/dashboard', label: 'Monitor', icon: <DashboardIcon sx={{ fontSize: 16 }} /> },
-                            { path: '/settings', label: 'Config', icon: <SettingsIcon sx={{ fontSize: 16 }} /> },
+                            { path: '/', label: 'Build', icon: <StartIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
+                            { path: '/dashboard', label: 'Status', icon: <DashboardIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
+                            { path: '/settings', label: 'Settings', icon: <SettingsIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
                         ].map((item) => (
                             <NavLink 
                                 key={item.path} 
@@ -128,13 +158,45 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
                         ))}
                     </nav>
 
-                    {/* Right Status Area */}
-                    <SystemStatusBadge />
+                    {/* Right Status & Action Area */}
+                    <Box display="flex" alignItems="center" gap={2}>
+                        <Button
+                            onClick={() => {
+                                localStorage.removeItem('ikf_mailmerge_session');
+                                window.location.href = '/';
+                            }}
+                            sx={{
+                                color: '#1e293b',
+                                fontSize: { xs: '0.72rem', md: '0.78rem' },
+                                fontWeight: 700,
+                                textTransform: 'none',
+                                letterSpacing: '0.02em',
+                                borderRadius: '999px',
+                                border: 'none',
+                                px: 2.25,
+                                py: 1,
+                                display: { xs: 'none', lg: 'flex' },
+                                gap: 1,
+                                bgcolor: 'rgba(241, 245, 249, 0.95)',
+                                boxShadow: '0 2px 12px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255,255,255,0.9)',
+                                transition: 'all 0.25s ease',
+                                '&:hover': { 
+                                    bgcolor: '#fff',
+                                    boxShadow: '0 4px 18px rgba(22, 102, 211, 0.12)',
+                                    transform: 'translateY(-1px)',
+                                },
+                            }}
+                        >
+                            <StartIcon sx={{ fontSize: 18, color: 'var(--primary)', opacity: 0.95 }} />
+                            Start new
+                        </Button>
+                        <SystemStatusBadge />
+                    </Box>
                 </Container>
             </header>
 
-            <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                <Container maxWidth={false} sx={{ px: { xs: 2, md: 6 }, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <main className="studio-viewport" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <Container maxWidth={false} sx={{ px: { xs: 2, md: 6 }, flex: 1, display: 'flex', flexDirection: 'column' }}>
                     <Suspense fallback={<Box display="flex" justifyContent="center" py={12}><CircularProgress thickness={5} size={48} /></Box>}>
                         {children}
                     </Suspense>
@@ -144,7 +206,7 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
             {!window.location.pathname.includes('process') && (
                 <footer style={{ padding: '1rem 0', borderTop: '1px solid var(--surface-divider)', textAlign: 'center' }}>
                     <Typography variant="caption" sx={{ color: 'var(--text-main)', fontWeight: 700, letterSpacing: '0.05em', display: 'block', mb: 0.5 }}>
-                        IKF MAILMERGE STUDIO
+                        IKF MAIL MERGE
                     </Typography>
                 </footer>
             )}

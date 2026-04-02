@@ -1,11 +1,30 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
+from sqlalchemy.orm import relationship
 from database import Base
 import datetime
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True)
+    hashed_password = Column(String, nullable=True)
+    google_id = Column(String, nullable=True, index=True)
+    is_approved = Column(Boolean, default=False)
+    role = Column(String, default="user") # 'admin' or 'user'
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    # Relationships
+    invoices = relationship("InvoiceData", back_populates="user")
+    smtp_accounts = relationship("SmtpAccount", back_populates="user")
+    batch_jobs = relationship("BatchJob", back_populates="user")
+    batch_attachments = relationship("BatchAttachment", back_populates="user")
 
 class InvoiceData(Base):
     __tablename__ = "invoices"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     batch_id = Column(String, index=True)
     recipient_name = Column(String, index=True)
     email_address = Column(String, index=True)
@@ -16,6 +35,7 @@ class InvoiceData(Base):
     error_message = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     sent_at = Column(DateTime, nullable=True)
+    user = relationship("User", back_populates="invoices")
 
 class SystemSettings(Base):
     __tablename__ = "settings"
@@ -44,6 +64,7 @@ class SmtpAccount(Base):
     __tablename__ = "smtp_accounts"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     display_name = Column(String, nullable=False)
     smtp_host = Column(String, default="smtp.gmail.com")
     smtp_port = Column(Integer, default=465)
@@ -52,12 +73,14 @@ class SmtpAccount(Base):
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    user = relationship("User", back_populates="smtp_accounts")
 
 
 class BatchJob(Base):
     __tablename__ = "batch_jobs"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     batch_id = Column(String, unique=True, index=True)
     source_filename = Column(String, nullable=True)
     status = Column(String, default="draft")  # draft, queued, scheduled, running, paused, cancelled, completed, failed
@@ -75,6 +98,7 @@ class BatchJob(Base):
     validation_summary = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+    user = relationship("User", back_populates="batch_jobs")
 
 
 class EmailTemplate(Base):
@@ -103,3 +127,17 @@ class AuditLog(Base):
     summary = Column(String, nullable=False)
     metadata_json = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
+class BatchAttachment(Base):
+    __tablename__ = "batch_attachments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    batch_id = Column(String, index=True, nullable=False)
+    original_filename = Column(String, nullable=False)
+    stored_filename = Column(String, nullable=False)
+    mime_type = Column(String, nullable=True)
+    file_size = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    user = relationship("User", back_populates="batch_attachments")

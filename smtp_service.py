@@ -8,7 +8,7 @@ class SmtpService:
         self.user = user
         self.password = password
 
-    def send_email(self, to_email: str, subject: str, html_content: str):
+    def send_email(self, to_email: str, subject: str, html_content: str, attachments=None):
         if not self.host or not self.port or not self.user or not self.password:
             return False, "SMTP configuration incomplete. Please check your settings."
             
@@ -17,6 +17,15 @@ class SmtpService:
         msg['Subject'] = subject
         msg['From'] = self.user
         msg['To'] = to_email
+        for item in (attachments or []):
+            mime = str(item.get("mime_type") or "application/octet-stream")
+            maintype, subtype = (mime.split("/", 1) + ["octet-stream"])[:2]
+            msg.add_attachment(
+                item.get("content_bytes") or b"",
+                maintype=maintype,
+                subtype=subtype,
+                filename=item.get("filename") or "attachment.bin",
+            )
 
         try:
             # If port is 465 (SMTPS), use SMTP_SSL. Otherwise use SMTP + STARTTLS.

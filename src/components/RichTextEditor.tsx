@@ -11,8 +11,12 @@ import {
     FormatAlignRight,
     FormatClear,
     AddLink,
-    FormatColorText
+    FormatColorText,
+    HorizontalRule,
+    TextFields,
+    TypeSpecimen
 } from '@mui/icons-material';
+import { Select, MenuItem, FormControl } from '@mui/material';
 
 interface RichTextEditorProps {
     value: string;
@@ -70,12 +74,14 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
         }
     }), [onChange]);
 
-    // Synchronize external value with editor content (only on mount)
+    // Synchronize external value with editor content (Reactive Sync)
     useEffect(() => {
-        if (editorRef.current && editorRef.current.innerHTML !== value) {
-            editorRef.current.innerHTML = value;
+        const editor = editorRef.current;
+        if (editor && editor.innerHTML !== value) {
+            // Only update if the content actually changed to avoid losing focus/cursor
+            editor.innerHTML = value || '';
         }
-    }, []);
+    }, [value]);
 
     // Listen for selection changes to track cursor position
     useEffect(() => {
@@ -130,6 +136,40 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
                 gap: 0.5,
                 alignItems: 'center'
             }}>
+                <Box display="flex" alignItems="center" gap={1}>
+                    <TypeSpecimen sx={{ fontSize: 18, color: 'var(--text-muted)', ml: 0.5 }} />
+                    <FormControl size="small" sx={{ minWidth: 120 }}>
+                        <Select
+                            displayEmpty
+                            value=""
+                            onChange={(e) => execCommand('fontName', e.target.value as string)}
+                            sx={{ height: 32, fontSize: '0.75rem', borderRadius: '8px' }}
+                            renderValue={(selected) => selected ? selected : "Font Family"}
+                        >
+                            {['Arial', 'Georgia', 'Courier New', 'Times New Roman', 'Verdana', 'Impact'].map(f => (
+                                <MenuItem key={f} value={f} sx={{ fontFamily: f, fontSize: '0.8rem' }}>{f}</MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+
+                    <TextFields sx={{ fontSize: 18, color: 'var(--text-muted)', ml: 1 }} />
+                    <FormControl size="small" sx={{ minWidth: 100 }}>
+                        <Select
+                            displayEmpty
+                            value=""
+                            onChange={(e) => execCommand('fontSize', e.target.value as string)}
+                            sx={{ height: 32, fontSize: '0.75rem', borderRadius: '8px' }}
+                            renderValue={(selected) => selected ? `Size: ${selected}` : "Size"}
+                        >
+                            {[1, 2, 3, 4, 5, 6, 7].map(s => (
+                                <MenuItem key={s} value={s.toString()} sx={{ fontSize: '0.8rem' }}>{s === 3 ? 'M' : s === 1 ? 'S' : s === 5 ? 'L' : s === 7 ? 'XL' : s}</MenuItem>
+                            ))}
+                        </Select>
+                    </FormControl>
+                </Box>
+
+                <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
+
                 <ButtonGroup size="small" variant="text">
                     <Tooltip title="Bold (Ctrl+B)"><IconButton size="small" onClick={() => execCommand('bold')}><FormatBold fontSize="small" /></IconButton></Tooltip>
                     <Tooltip title="Italic (Ctrl+I)"><IconButton size="small" onClick={() => execCommand('italic')}><FormatItalic fontSize="small" /></IconButton></Tooltip>
@@ -149,13 +189,14 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
                     <Tooltip title="Align Left"><IconButton size="small" onClick={() => execCommand('justifyLeft')}><FormatAlignLeft fontSize="small" /></IconButton></Tooltip>
                     <Tooltip title="Align Center"><IconButton size="small" onClick={() => execCommand('justifyCenter')}><FormatAlignCenter fontSize="small" /></IconButton></Tooltip>
                     <Tooltip title="Align Right"><IconButton size="small" onClick={() => execCommand('justifyRight')}><FormatAlignRight fontSize="small" /></IconButton></Tooltip>
+                    <Tooltip title="Horizontal Rule"><IconButton size="small" onClick={() => execCommand('insertHorizontalRule')}><HorizontalRule fontSize="small" /></IconButton></Tooltip>
                 </ButtonGroup>
 
                 <Divider orientation="vertical" flexItem sx={{ mx: 1 }} />
 
                 <ButtonGroup size="small" variant="text">
                     <Tooltip title="Text Color"><IconButton size="small" onClick={() => {
-                        const color = prompt('Enter a color (hex or name):', '#6366f1');
+                        const color = prompt('Enter a color (hex or name):', '#1666d3');
                         if (color) execCommand('foreColor', color);
                     }}><FormatColorText fontSize="small" /></IconButton></Tooltip>
                     <Tooltip title="Insert Link"><IconButton size="small" onClick={() => {
@@ -165,7 +206,6 @@ const RichTextEditor = forwardRef<RichTextEditorHandle, RichTextEditorProps>(
                 </ButtonGroup>
 
                 <Box sx={{ flexGrow: 1 }} />
-
                 <Tooltip title="Clear Formatting"><IconButton size="small" onClick={() => execCommand('removeFormat')}><FormatClear fontSize="small" color="error" /></IconButton></Tooltip>
             </Box>
 
