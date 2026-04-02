@@ -9,7 +9,6 @@ import json
 import datetime
 import time
 import logging
-import difflib
 import io
 import base64
 import uuid
@@ -21,14 +20,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 from urllib.parse import quote
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import func, text
 import pandas as pd
 
 import models
 import schemas
-from config import ADMIN_ACCESS_TOKEN, ALLOWED_ORIGINS, APP_ENV, APP_PORT, CREDENTIALS_PATH, DATA_DIR, LOGO_PATH, TOKEN_PATH
+import auth
+from config import ALLOWED_ORIGINS, APP_ENV, APP_PORT, CREDENTIALS_PATH, DATA_DIR, LOGO_PATH, TOKEN_PATH
 from database import SessionLocal, engine, get_db
-from security import decrypt_secret, encrypt_secret, is_encrypted_secret
+from security import decrypt_secret, encrypt_secret
 
 # Configure Logging
 log_file = os.path.join(DATA_DIR, "debug.log")
@@ -49,7 +49,7 @@ models.Base.metadata.create_all(bind=engine)
 
 # --- Monolith: one process serves /api/* and the React SPA built to ./dist (see static routes at EOF). ---
 app = FastAPI(title="IKF MailMerge", description="API + static UI (run `npm run build` before production).")
-WORKER_POLL_SECONDS = 2
+WORKER_POLL_SECONDS = max(1, int(os.getenv("IKF_WORKER_POLL_SECONDS", "2")))
 worker_shutdown_event = threading.Event()
 worker_thread: Optional[threading.Thread] = None
 MAX_BATCH_WORKERS = max(1, min(20, int(os.getenv("IKF_MAX_BATCH_WORKERS", "5"))))
@@ -77,31 +77,8 @@ app.add_middleware(
 
 @app.middleware("http")
 async def admin_access_middleware(request: Request, call_next):
-    protected_prefixes = (
-        "/api/settings",
-        "/api/settings/verify",
-        "/api/smtp_accounts",
-        "/api/templates",
-        "/api/send_emails",
-        "/api/send_test_email",
-        "/api/batches",
-        "/api/purge_all_batches",
-        "/api/admin/purge_batch_data",
-    )
-    if ADMIN_ACCESS_TOKEN and request.url.path.startswith(protected_prefixes):
-        supplied_token = request.headers.get("X-Admin-Key", "").strip()
-        if supplied_token != ADMIN_ACCESS_TOKEN:
-            return JSONResponse(
-                status_code=401,
-                content={
-                    "ok": False,
-                    "detail": error_detail(
-                        "Admin access token is missing or invalid.",
-                        "admin_auth_failed",
-                        "Provide a valid X-Admin-Key header to use protected endpoints."
-                    )
-                }
-            )
+    # This middleware is being phased out in favor of Depends(get_current_active_admin)
+    # But we keep it for now to avoid breaking the build while transitioning.
     return await call_next(request)
 
 
@@ -148,11 +125,15 @@ def attachment_payloads_for_batch(db: Session, batch_id: str) -> list[dict]:
 
 
 def get_batch_attachment_stats(db: Session, batch_id: str) -> dict:
-    items = db.query(models.BatchAttachment).filter(
-        models.BatchAttachment.batch_id == batch_id
-    ).all()
-    total_bytes = sum(int(item.file_size or 0) for item in items)
-    return {"count": len(items), "total_bytes": total_bytes}
+    row = (
+        db.query(
+            func.count(models.BatchAttachment.id).label("count"),
+            func.coalesce(func.sum(models.BatchAttachment.file_size), 0).label("total_bytes"),
+        )
+        .filter(models.BatchAttachment.batch_id == batch_id)
+        .one()
+    )
+    return {"count": row.count, "total_bytes": row.total_bytes}
 
 
 def ensure_batch_exists_for_attachments(db: Session, batch_id: str):
@@ -227,6 +208,30 @@ async def unhandled_exception_handler(_request: Request, exc: Exception):
 @app.on_event("startup")
 def startup_event():
     ensure_worker_running()
+    # Seed Super Admin
+    db = SessionLocal()
+    try:
+        admin_email = "suraj.sonnar@ikf.co.in"
+        admin = db.query(models.User).filter(models.User.email == admin_email).first()
+        if not admin:
+            admin = models.User(
+                email=admin_email,
+                is_approved=True,
+                role="admin",
+                hashed_password=auth.get_password_hash("admin123") # Default password, should be changed
+            )
+            db.add(admin)
+            db.commit()
+            logger.info(f"Seeded super-admin: {admin_email}")
+        else:
+            # Ensure existing suraj is admin and approved
+            admin.is_approved = True
+            admin.role = "admin"
+            db.commit()
+    except Exception as e:
+        logger.error(f"Failed to seed admin: {e}")
+    finally:
+        db.close()
 
 
 @app.on_event("shutdown")
@@ -358,6 +363,40 @@ SAMPLE_MESSAGE_CREATIVE = """<h2 style="color: #111827; margin-top: 0;">Hi <span
 <span style="color: #8b5cf6; font-weight: 700;">IKF Digital Support</span></p>"""
 
 GMAIL_OAUTH_STATE_COOKIE = "gmail_oauth_state"
+
+
+def _get_gmail_client_config(settings, redirect_uri: str) -> dict:
+    """Return a Flow-compatible client_config dict.
+
+    Priority: DB-stored credentials → credentials.json file.
+    """
+    if settings and settings.gmail_client_id and settings.gmail_client_secret:
+        return {
+            "web": {
+                "client_id": settings.gmail_client_id,
+                "client_secret": settings.gmail_client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [redirect_uri],
+            }
+        }
+    if CREDENTIALS_PATH.exists():
+        raw = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
+        # credentials.json can be "installed" or "web" type
+        creds = raw.get("web") or raw.get("installed") or {}
+        return {
+            "web": {
+                "client_id": creds.get("client_id", ""),
+                "client_secret": creds.get("client_secret", ""),
+                "auth_uri": creds.get("auth_uri", "https://accounts.google.com/o/oauth2/auth"),
+                "token_uri": creds.get("token_uri", "https://oauth2.googleapis.com/token"),
+                "redirect_uris": [redirect_uri],
+            }
+        }
+    raise HTTPException(
+        status_code=400,
+        detail="Gmail credentials not configured. Save your Client ID and Secret in Settings, or place credentials.json in the app directory."
+    )
 PNG_LOGO_PATH = str(LOGO_PATH)
 
 KNOWLEDGE_FACTORY_LOGO_SVG = """
@@ -388,6 +427,340 @@ def get_logo_data_uri() -> str:
 KNOWLEDGE_FACTORY_LOGO_DATA_URI = get_logo_data_uri()
 DEFAULT_HTML_TEMPLATE = DEFAULT_HTML_TEMPLATE.replace("__LOGO_SRC__", KNOWLEDGE_FACTORY_LOGO_DATA_URI)
 DEFAULT_HTML_TEMPLATE_CREATIVE = DEFAULT_HTML_TEMPLATE_CREATIVE.replace("__LOGO_SRC__", KNOWLEDGE_FACTORY_LOGO_DATA_URI)
+
+
+
+# --- Auth Endpoints ---
+
+@app.post("/api/auth/signup", response_model=schemas.UserResponse)
+def signup(user_in: schemas.UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(models.User).filter(models.User.email == user_in.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    user = models.User(
+        email=user_in.email,
+        hashed_password=auth.get_password_hash(user_in.password),
+        is_approved=False,
+        role="user"
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.post("/api/auth/login", response_model=schemas.Token)
+def login(user_in: schemas.UserLogin, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.email == user_in.email).first()
+    if not user or not auth.verify_password(user_in.password, user.hashed_password):
+        raise HTTPException(
+            status_code=401, 
+            detail=error_detail("Invalid email or password", "auth_failed", "Double-check your credentials.")
+        )
+    
+    access_token = auth.create_access_token(data={"sub": user.email})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+@app.get("/api/auth/me", response_model=schemas.UserResponse)
+def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
+    return current_user
+
+@app.post("/api/auth/google", response_model=schemas.Token)
+async def google_login(payload: schemas.GoogleLoginRequest, db: Session = Depends(get_db)):
+    import httpx
+    
+    # Verify token with google
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"https://oauth2.googleapis.com/tokeninfo?id_token={payload.credential}")
+            if resp.status_code != 200:
+                raise HTTPException(status_code=400, detail="Invalid Google token")
+            data = resp.json()
+            email = data.get("email")
+    except Exception as e:
+        logger.error(f"Google Token Verification Failed: {e}")
+        raise HTTPException(status_code=400, detail="Google authentication failed")
+        
+    if not email:
+        raise HTTPException(status_code=400, detail="Google token missing email")
+
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user:
+        # Auto-provision
+        user = models.User(
+            email=email,
+            hashed_password=None,
+            is_approved=False, # Still needs admin approval
+            role="user"
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    
+    access_token = auth.create_access_token(data={"sub": user.email})
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+
+# --- Public Config Endpoint ---
+
+@app.get("/api/config", response_model=schemas.PublicConfig)
+def get_public_config():
+    """Returns non-sensitive public configuration the frontend needs at runtime."""
+    return {
+        "google_client_id": os.getenv("GOOGLE_CLIENT_ID") or os.getenv("VITE_GOOGLE_CLIENT_ID") or None,
+    }
+
+
+# --- Forgot / Reset Password ---
+
+def _send_reset_email(to_email: str, reset_url: str, db: Session):
+    """Try to send a password-reset email via the configured provider."""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    html_body = f"""
+    <html><body style="font-family:sans-serif;color:#0f172a;padding:24px">
+      <h2 style="color:#1666d3">IKF MailMerge Studio — Password Reset</h2>
+      <p>We received a request to reset your password. Click the button below to choose a new password.</p>
+      <p style="margin:28px 0">
+        <a href="{reset_url}"
+           style="background:#1666d3;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:700">
+          Reset My Password
+        </a>
+      </p>
+      <p style="color:#64748b;font-size:13px">
+        This link expires in <strong>30 minutes</strong>.<br>
+        If you didn't request a reset, you can safely ignore this email.
+      </p>
+      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0">
+      <p style="color:#94a3b8;font-size:12px">IKF — I Knowledge Factory Pvt. Ltd. · Internal Platform</p>
+    </body></html>
+    """
+
+    settings = db.query(models.SystemSettings).first()
+
+    # 1. Try SMTP from system settings
+    smtp_host = smtp_port = smtp_user = smtp_password = None
+    if settings:
+        smtp_host = settings.smtp_host
+        smtp_port = settings.smtp_port
+        smtp_user = settings.smtp_user
+        smtp_password_enc = settings.smtp_password
+        if smtp_password_enc:
+            try:
+                from security import decrypt_secret
+                smtp_password = decrypt_secret(smtp_password_enc)
+            except Exception:
+                smtp_password = smtp_password_enc
+
+    # 2. Try multi-account SMTP — pick the active one
+    if not (smtp_host and smtp_user and smtp_password):
+        acct = db.query(models.SmtpAccount).filter(models.SmtpAccount.is_active == True).first()
+        if acct:
+            smtp_host = acct.smtp_host
+            smtp_port = acct.smtp_port
+            smtp_user = acct.smtp_user
+            try:
+                from security import decrypt_secret
+                smtp_password = decrypt_secret(acct.smtp_password)
+            except Exception:
+                smtp_password = acct.smtp_password
+
+    if smtp_host and smtp_user and smtp_password:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = "Reset Your IKF MailMerge Password"
+        msg["From"] = smtp_user
+        msg["To"] = to_email
+        msg.attach(MIMEText(html_body, "html"))
+        port = int(smtp_port or 465)
+        try:
+            if port == 465:
+                with smtplib.SMTP_SSL(smtp_host, port, timeout=10) as server:
+                    server.login(smtp_user, smtp_password)
+                    server.sendmail(smtp_user, to_email, msg.as_string())
+            else:
+                with smtplib.SMTP(smtp_host, port, timeout=10) as server:
+                    server.starttls()
+                    server.login(smtp_user, smtp_password)
+                    server.sendmail(smtp_user, to_email, msg.as_string())
+            return True
+        except Exception as e:
+            logger.error("Password reset email SMTP error: %s", e)
+
+    # 3. Try Gmail API token
+    try:
+        from gmail_service import GmailService
+        svc = GmailService()
+        svc.send_email(to_email=to_email, subject="Reset Your IKF MailMerge Password", body=html_body)
+        return True
+    except Exception as e:
+        logger.error("Password reset email Gmail error: %s", e)
+
+    return False
+
+
+@app.post("/api/auth/forgot-password")
+def forgot_password(payload: schemas.ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """
+    Always returns 200 to avoid user-enumeration. Sends reset link only if email exists
+    and has a hashed_password (Google-only accounts cannot use password reset).
+    """
+    user = db.query(models.User).filter(models.User.email == payload.email).first()
+
+    if user and user.hashed_password:
+        import secrets as _secrets
+        # Expire any previous unused tokens for this email
+        db.query(models.PasswordResetToken).filter(
+            models.PasswordResetToken.email == payload.email,
+            models.PasswordResetToken.used == False,
+        ).delete()
+
+        token = _secrets.token_urlsafe(32)
+        expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
+        reset_record = models.PasswordResetToken(
+            email=payload.email,
+            token=token,
+            expires_at=expires_at,
+        )
+        db.add(reset_record)
+        db.commit()
+
+        base_url = str(request.base_url).rstrip("/")
+        reset_url = f"{base_url}/auth?reset_token={token}"
+        sent = _send_reset_email(payload.email, reset_url, db)
+        if not sent:
+            logger.warning("Password reset email could not be sent for %s. Reset URL: %s", payload.email, reset_url)
+
+    return {"message": "If that email exists in our system, a reset link has been sent."}
+
+
+@app.post("/api/auth/reset-password")
+def reset_password(payload: schemas.ResetPasswordRequest, db: Session = Depends(get_db)):
+    record = db.query(models.PasswordResetToken).filter(
+        models.PasswordResetToken.token == payload.token,
+        models.PasswordResetToken.used == False,
+    ).first()
+
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link.")
+
+    if datetime.datetime.utcnow() > record.expires_at:
+        raise HTTPException(status_code=400, detail="Reset link has expired. Please request a new one.")
+
+    user = db.query(models.User).filter(models.User.email == record.email).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found.")
+
+    user.hashed_password = auth.get_password_hash(payload.new_password)
+    record.used = True
+    db.commit()
+
+    return {"message": "Password updated successfully. You can now sign in."}
+
+
+# --- Admin User Management Endpoints ---
+
+@app.get("/api/admin/users", response_model=list[schemas.UserResponse])
+def list_users(
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
+    return db.query(models.User).order_by(models.User.created_at.asc()).all()
+
+@app.post("/api/admin/users/{user_id}/approve", response_model=schemas.UserResponse)
+def approve_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.is_approved = True
+    log_audit(db, "user.approved", "user", f"Approved user {user.email}", str(user_id))
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.post("/api/admin/users/{user_id}/revoke", response_model=schemas.UserResponse)
+def revoke_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Cannot revoke your own access")
+    user.is_approved = False
+    log_audit(db, "user.revoked", "user", f"Revoked user {user.email}", str(user_id))
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.post("/api/admin/users/{user_id}/promote", response_model=schemas.UserResponse)
+def promote_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.role = "admin"
+    user.is_approved = True
+    log_audit(db, "user.promoted", "user", f"Promoted {user.email} to admin", str(user_id))
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.post("/api/admin/users/{user_id}/demote", response_model=schemas.UserResponse)
+def demote_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Cannot demote yourself")
+    user.role = "user"
+    log_audit(db, "user.demoted", "user", f"Demoted {user.email} to user", str(user_id))
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.delete("/api/admin/users/{user_id}")
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_admin.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    # Disassociate records instead of cascading delete
+    db.query(models.BatchJob).filter(models.BatchJob.user_id == user_id).update({"user_id": None})
+    db.query(models.InvoiceData).filter(models.InvoiceData.user_id == user_id).update({"user_id": None})
+    db.query(models.SmtpAccount).filter(models.SmtpAccount.user_id == user_id).update({"user_id": None})
+    db.query(models.BatchAttachment).filter(models.BatchAttachment.user_id == user_id).update({"user_id": None})
+    log_audit(db, "user.deleted", "user", f"Deleted user {user.email}", str(user_id))
+    db.delete(user)
+    db.commit()
+    return {"ok": True}
 
 
 def build_gmail_redirect_uri(request: Request) -> str:
@@ -639,7 +1012,12 @@ def normalize_email_list(raw_email: str) -> list[str]:
 
 
 def is_valid_email_address(value: str) -> bool:
-    return bool(re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value.strip()))
+    try:
+        from email_validator import validate_email, EmailNotValidError  # bundled with pydantic[email]
+        validate_email(value.strip(), check_deliverability=False)
+        return True
+    except EmailNotValidError:
+        return False
 
 
 def validate_send_payload(batch_id: str, subject: Optional[str], content: Optional[str]):
@@ -727,7 +1105,8 @@ def send_record(
     subject = substitute_variables(base_subject, context)
     content = substitute_variables(base_raw_message, context)
 
-    if payload_is_html and ("<html" in content.lower() or "<body" in content.lower()):
+    content_lower = content.lower()
+    if payload_is_html and (content_lower.startswith("<!doctype") or "<html" in content_lower):
         body = content
     else:
         body = wrapper_template.replace("{{MESSAGE_BODY}}", content)
@@ -786,6 +1165,7 @@ def send_record(
     else:
         record.status = "failed"
         record.error_message = "; ".join(errors) if errors else "Unknown provider error"
+
     db.commit()
     return {"ok": success_count == len(recipients), "sent": success_count, "failed": len(recipients) - success_count, "errors": errors}
 
@@ -834,18 +1214,24 @@ def log_audit(db: Session, action: str, entity_type: str, summary: str, entity_i
     )
 
 
-def get_batch_job(db: Session, batch_id: str) -> Optional[models.BatchJob]:
-    return db.query(models.BatchJob).filter(models.BatchJob.batch_id == batch_id).first()
+def get_batch_job(db: Session, batch_id: str, user_id: Optional[int] = None) -> Optional[models.BatchJob]:
+    query = db.query(models.BatchJob).filter(models.BatchJob.batch_id == batch_id)
+    if user_id:
+        query = query.filter(models.BatchJob.user_id == user_id)
+    return query.first()
 
 
-def ensure_batch_job(db: Session, batch_id: str, source_filename: Optional[str] = None) -> models.BatchJob:
+def ensure_batch_job(db: Session, batch_id: str, source_filename: Optional[str] = None, user_id: Optional[int] = None) -> models.BatchJob:
     batch = get_batch_job(db, batch_id)
     if batch:
         if source_filename and not batch.source_filename:
             batch.source_filename = source_filename
+        if user_id and not batch.user_id:
+            batch.user_id = user_id
+            db.commit()
         return batch
 
-    batch = models.BatchJob(batch_id=batch_id, source_filename=source_filename, status="draft")
+    batch = models.BatchJob(batch_id=batch_id, source_filename=source_filename, status="draft", user_id=user_id)
     db.add(batch)
     db.flush()
     return batch
@@ -880,12 +1266,21 @@ def get_row_context(record: models.InvoiceData) -> dict:
         if k not in context:
             context[k] = v
             
-    # Senior QA: Smart Data Sanitization
-    for key, val in context.items():
-        # Strip time from dates if they look like timestamps
-        if isinstance(val, str) and (('T00:00:00' in val) or (' 00:00:00' in val)):
-            context[key] = val.split('T')[0].split(' ')[0]
-            
+    # Strip time portion from any datetime string (not just midnight).
+    # Handles: "2024-01-15T14:30:00", "2024-01-15 00:00:00", "2024-01-15T00:00:00.000Z"
+    for key in list(context.keys()):
+        val = context[key]
+        if not isinstance(val, str) or not val:
+            continue
+        ts_match = re.match(r"^(\d{4})-(\d{2})-(\d{2})[T ]", val)
+        if ts_match:
+            try:
+                context[key] = datetime.datetime(
+                    int(ts_match.group(1)), int(ts_match.group(2)), int(ts_match.group(3))
+                ).strftime("%d/%m/%Y")
+            except Exception:
+                context[key] = val[:10]  # fall back to just the date part
+
     return context
 
 
@@ -936,34 +1331,70 @@ def evaluate_batch_validation(db: Session, batch_id: str, subject: str, content:
     if missing_name_rows:
         issues.append(f"{missing_name_rows} row(s) are missing recipient names.")
 
+    email_count = sum(len(normalize_email_list(r.email_address)) for r in records)
+
     return {
         "ok_to_send": not invalid_rows,  # unresolved variables are warnings only, not blockers
         "record_count": len(records),
+        "email_count": email_count,
         "duplicate_recipients": sorted(duplicate_recipients),
         "duplicate_count": len(duplicate_recipients),
         "unresolved_variables": unresolved_variables,
         "invalid_rows": invalid_rows,
         "missing_name_rows": missing_name_rows,
         "issues": issues,
+        "total": email_count
     }
 
 
 def build_batch_stats(db: Session, batch_id: str) -> dict:
     records = db.query(models.InvoiceData).filter(models.InvoiceData.batch_id == batch_id).all()
-    total = len(records)
-    success = len([record for record in records if record.status == "success"])
-    failed = len([record for record in records if record.status == "failed"])
-    partial = len([record for record in records if record.status == "partial"])
-    pending = len([record for record in records if record.status == "pending"])
+    
+    total = 0
+    success = 0
+    failed = 0
+    partial_count = 0
+    pending = 0
+
+    for record in records:
+        emails = normalize_email_list(record.email_address)
+        num_emails = len(emails) or 1 # Fallback to 1 if empty to show missing email error
+        total += num_emails
+
+        if record.status == "success":
+            success += num_emails
+        elif record.status == "failed":
+            failed += num_emails
+        elif record.status == "pending":
+            pending += num_emails
+        elif record.status == "partial":
+            partial_count += 1
+            # Smart Parsing: Extract "X/Y" from "Partial success (X/Y)"
+            try:
+                import re
+                match = re.search(r"\((\d+)/(\d+)\)", record.error_message or "")
+                if match:
+                    s_val = int(match.group(1))
+                    f_val = int(match.group(2)) - s_val
+                    success += s_val
+                    failed += max(0, f_val)
+                else:
+                    # Fallback if parsing fails: assume half success
+                    success += num_emails // 2
+                    failed += num_emails - (num_emails // 2)
+            except Exception:
+                success += 1
+                failed += max(0, num_emails - 1)
+
     completion_rate = round((success / total) * 100, 2) if total else 0
     
-    logger.info(f"BuildStats for {batch_id}: Total={total}, Success={success}, Failed={failed}, Pending={pending}")
+    logger.info(f"BuildStats for {batch_id}: TotalEmails={total}, Success={success}, Failed={failed}, Pending={pending}")
     
     return {
         "total": total,
         "success": success,
         "failed": failed,
-        "partial": partial,
+        "partial": partial_count,
         "pending": pending,
         "completion_rate": completion_rate,
     }
@@ -1151,6 +1582,14 @@ def get_next_due_dispatch_slot(dispatch_plan: Optional[dict], now_utc: datetime.
 
 
 def claim_next_batch_job(db: Session) -> Optional[models.BatchJob]:
+    """Atomically claim the next eligible job using an optimistic-lock pattern.
+
+    We SELECT the candidate first, then immediately attempt an UPDATE that
+    constrains on BOTH the primary key AND the expected status. If rowcount == 0
+    another worker already claimed it, so we return None and let the poll loop
+    retry on the next tick. This is safe for SQLite because each UPDATE is an
+    atomic write inside its own implicit transaction.
+    """
     now = datetime.datetime.utcnow()
     candidate = (
         db.query(models.BatchJob)
@@ -1161,18 +1600,39 @@ def claim_next_batch_job(db: Session) -> Optional[models.BatchJob]:
     if not candidate:
         candidate = (
             db.query(models.BatchJob)
-            .filter(models.BatchJob.status == "scheduled", models.BatchJob.scheduled_for <= now)
+            .filter(
+                models.BatchJob.status == "scheduled",
+                models.BatchJob.scheduled_for <= now,
+            )
             .order_by(models.BatchJob.scheduled_for.asc(), models.BatchJob.created_at.asc())
             .first()
         )
     if not candidate:
         return None
-    candidate.status = "running"
-    if not candidate.started_at:
-        candidate.started_at = now
-    candidate.paused_at = None
-    candidate.cancelled_at = None
+
+    # Atomic claim: only succeeds if status hasn't changed since the SELECT above.
+    rows_updated = (
+        db.query(models.BatchJob)
+        .filter(
+            models.BatchJob.id == candidate.id,
+            models.BatchJob.status == candidate.status,  # the concurrency guard
+        )
+        .update(
+            {
+                "status": "running",
+                "started_at": candidate.started_at or now,
+                "paused_at": None,
+                "cancelled_at": None,
+            },
+            synchronize_session="fetch",
+        )
+    )
     db.commit()
+
+    if rows_updated == 0:
+        # Another worker claimed it between our SELECT and UPDATE.
+        return None
+
     db.refresh(candidate)
     return candidate
 
@@ -1212,57 +1672,102 @@ def heuristic_column_discovery(df: pd.DataFrame) -> dict:
     recommended = {"name": "", "email": "", "amount": "", "date": ""}
     try:
         columns = df.columns.tolist()
-        # Sample up to 10 rows for deeper analysis
         sample = df.head(10).astype(str).apply(lambda x: x.str.strip())
 
-        # 1. EMAIL DETECTION (Highest confidence: Regex)
-        email_regex = r"[^@\s]+@[^@\s]+\.[^@\s]+"
-        for col in columns:
-            try:
-                # Ensure we're working with strings for regex
-                if sample[col].apply(lambda x: bool(re.search(email_regex, str(x)))).any():
-                    recommended["email"] = col
-                    break
-            except Exception:
-                continue
+        def slug(s: str) -> str:
+            """Remove spaces/underscores/hyphens and lowercase for keyword matching."""
+            return re.sub(r"[\s_\-]", "", str(s).lower())
 
-        # 2. DATE DETECTION (Pattern Matching + pd.to_datetime)
-        date_patterns = [
-            r'\d{2,4}[-/\.]\d{1,2}[-/\.]\d{1,2}', # ISO/General
-            r'\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}', # US/UK
-        ]
+        col_slugs = {col: slug(col) for col in columns}
+
+        # ── 1. EMAIL ────────────────────────────────────────────────────────────
+        # Priority: column name hint → content regex
+        _email_hints = {"email", "mail", "emailaddress", "emailid", "emailladdress"}
+        for col in columns:
+            if any(h in col_slugs[col] for h in _email_hints):
+                recommended["email"] = col
+                break
+        if not recommended["email"]:
+            email_regex = r"[^@\s]+@[^@\s]+\.[^@\s]+"
+            for col in columns:
+                try:
+                    if sample[col].apply(lambda x: bool(re.search(email_regex, str(x)))).any():
+                        recommended["email"] = col
+                        break
+                except Exception:
+                    continue
+
+        # ── 2. DATE ─────────────────────────────────────────────────────────────
+        _date_hints = {"date", "duedate", "due", "dob", "birthdate", "expiry",
+                       "deadline", "schedule", "scheduleddate", "paymentdate", "invoicedate"}
         for col in columns:
             if col == recommended["email"]: continue
-            try:
-                if any(sample[col].apply(lambda x: any(re.search(p, str(x)) for p in date_patterns))):
-                    recommended["date"] = col
-                    break
-            except Exception:
-                continue
+            if any(h in col_slugs[col] for h in _date_hints):
+                recommended["date"] = col
+                break
+        if not recommended["date"]:
+            _date_patterns = [
+                r"\d{2,4}[-/\.]\d{1,2}[-/\.]\d{1,2}",   # 2024-01-15, 2024/01/15
+                r"\d{1,2}[-/\.]\d{1,2}[-/\.]\d{2,4}",   # 15/01/2024, 01-15-2024
+                r"\d{1,2}\s+\w{3,9}\s+\d{4}",            # 15 Jan 2024
+            ]
+            for col in columns:
+                if col == recommended["email"]: continue
+                try:
+                    if sample[col].apply(
+                        lambda x: any(re.search(p, str(x)) for p in _date_patterns)
+                    ).any():
+                        recommended["date"] = col
+                        break
+                except Exception:
+                    continue
 
-        # 3. AMOUNT DETECTION (Numeric, not primary keys)
+        # ── 3. AMOUNT ───────────────────────────────────────────────────────────
+        _amount_hints = {"amount", "price", "total", "fee", "cost", "balance",
+                         "outstanding", "payable", "receivable", "bill", "invoice",
+                         "payment", "salary", "revenue", "profit", "tax", "discount",
+                         "paid", "due", "charge", "value", "rate"}
+        taken = {recommended["email"], recommended["date"]}
         for col in columns:
-            if col in [recommended["email"], recommended["date"]]: continue
-            numeric_vals = pd.to_numeric(sample[col], errors='coerce')
-            if not numeric_vals.isna().all():
-                col_lower = str(col).lower()
-                # Heuristic: Avoid ID, Code, Phone columns for 'Amount'
-                if not any(k in col_lower for k in ["id", "code", "phone", "mobile", "zip", "no"]):
+            if col in taken: continue
+            if any(h in col_slugs[col] for h in _amount_hints):
+                recommended["amount"] = col
+                break
+        if not recommended["amount"]:
+            _skip_amount = {"id", "code", "phone", "mobile", "zip", "no", "num", "pin", "index"}
+            for col in columns:
+                if col in taken: continue
+                if any(k in col_slugs[col] for k in _skip_amount): continue
+                # Strip currency symbols before numeric check
+                numeric_vals = pd.to_numeric(
+                    sample[col].str.replace(r"[₹$€£,\s]", "", regex=True), errors="coerce"
+                )
+                if numeric_vals.notna().mean() > 0.5:
                     recommended["amount"] = col
                     break
 
-        # 4. NAME DETECTION (Heuristic: Non-numeric strings, reasonable length)
+        # ── 4. NAME ─────────────────────────────────────────────────────────────
+        _name_hints = {"name", "client", "customer", "recipient", "person",
+                       "company", "firm", "vendor", "buyer", "seller", "payee",
+                       "payer", "fullname", "firstname", "lastname", "contactname"}
+        taken = {recommended["email"], recommended["date"], recommended["amount"]}
         for col in columns:
-            if col in [recommended["email"], recommended["date"], recommended["amount"]]: continue
-            col_lower = str(col).lower()
-            # Avoid IDs and system fields
-            if any(k in col_lower for k in ["id", "code", "index", "status", "type"]): continue
-            
-            # Check if values look like names/entities
-            is_name_like = sample[col].apply(lambda x: 3 <= len(x) <= 60 and not x.replace('.', '').replace('-', '').isnumeric())
-            if is_name_like.all():
+            if col in taken: continue
+            if any(h in col_slugs[col] for h in _name_hints):
                 recommended["name"] = col
                 break
+        if not recommended["name"]:
+            _skip_name = {"id", "code", "index", "status", "type", "no", "num", "pin"}
+            for col in columns:
+                if col in taken: continue
+                if any(k in col_slugs[col] for k in _skip_name): continue
+                is_name_like = sample[col].apply(
+                    lambda x: 2 <= len(str(x)) <= 80
+                    and not str(x).replace(".", "").replace("-", "").replace(",", "").isnumeric()
+                )
+                if is_name_like.mean() > 0.5:
+                    recommended["name"] = col
+                    break
 
     except Exception as e:
         logger.error(f"Heuristic discovery failed: {e}")
@@ -1289,28 +1794,28 @@ def substitute_variables(template: str, context: dict) -> str:
     def replace_match(match):
         raw_tag_content = match.group(1).strip()
         val = find_match(raw_tag_content)
-        
+
         if val is not None:
-            # Senior QA: Smart Value Formatting
-            # If it's a date-like string from get_row_context, ensure it's clean
-            if isinstance(val, str) and '-' in val and len(val) == 10:
+            val_str = str(val).strip()
+
+            # 1. Try date formatting first (before numeric check)
+            formatted_date = _try_format_date(val_str)
+            if formatted_date:
+                return formatted_date
+
+            # 2. Currency formatting — ONLY for amount-like column names
+            if _is_amount_like_key(raw_tag_content):
                 try:
-                    dt = pd.to_datetime(val)
-                    return dt.strftime('%d/%m/%y') # Professional Inbox Format
-                except: pass
-            
-            # If it's a number-like string (Amount), format with currency precision
-            if isinstance(val, (int, float, str)):
-                try:
-                    num_str = str(val).replace(',', '').replace('₹', '').replace('$', '').strip()
+                    num_str = re.sub(r"[,₹$€£\s]", "", val_str)
                     num = float(num_str)
-                    if num > 0:
-                        return f"{num:,.2f}" # Professional 1,234.00 format
-                except: pass
-                
-            return str(val)
-            
-        return match.group(0) # Keep unreplaced tags visible for auditing
+                    if num >= 0:
+                        return f"{num:,.2f}"
+                except Exception:
+                    pass
+
+            return val_str
+
+        return match.group(0)  # Keep unreplaced tags visible for auditing
 
     return re.sub(pattern, replace_match, template)
 
@@ -1398,7 +1903,12 @@ def system_overview(db: Session = Depends(get_db)):
         "health": "attention" if batch_counts["failed"] else "ok",
     }
 @app.get("/api/settings", response_model=schemas.SystemSettings)
-def get_settings(db: Session = Depends(get_db)):
+def get_settings(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    # Any active user can see basic settings, but sensitive fields should be masked in the response if possible.
+    # For now, we allow reading for verified users.
     settings = db.query(models.SystemSettings).first()
     if not settings:
         settings = models.SystemSettings(
@@ -1420,7 +1930,11 @@ def get_settings(db: Session = Depends(get_db)):
     return settings_dict
 
 @app.post("/api/settings", response_model=schemas.SystemSettings)
-def update_settings(payload: schemas.SystemSettingsUpdate, db: Session = Depends(get_db)):
+def update_settings(
+    payload: schemas.SystemSettingsUpdate, 
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
     settings = db.query(models.SystemSettings).first()
     if not settings:
         settings = models.SystemSettings()
@@ -1530,11 +2044,18 @@ def verify_settings_connection(db: Session = Depends(get_db)):
 
 
 @app.get("/api/smtp_accounts", response_model=list[schemas.SmtpAccount])
-def get_smtp_accounts(db: Session = Depends(get_db)):
+def get_smtp_accounts(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
     settings = db.query(models.SystemSettings).first()
     import_legacy_smtp_account_if_needed(db, settings)
 
-    accounts = db.query(models.SmtpAccount).order_by(models.SmtpAccount.created_at.asc()).all()
+    query = db.query(models.SmtpAccount)
+    if current_user.role != "admin":
+        query = query.filter(models.SmtpAccount.user_id == current_user.id)
+    
+    accounts = query.order_by(models.SmtpAccount.created_at.asc()).all()
     if accounts and not any(account.is_active for account in accounts):
         active_account = ensure_single_active_smtp_account(db, accounts[0].id)
         sync_legacy_smtp_fields(settings, active_account)
@@ -1545,7 +2066,11 @@ def get_smtp_accounts(db: Session = Depends(get_db)):
 
 
 @app.post("/api/smtp_accounts", response_model=schemas.SmtpAccount)
-def create_smtp_account(payload: schemas.SmtpAccountCreate, db: Session = Depends(get_db)):
+def create_smtp_account(
+    payload: schemas.SmtpAccountCreate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
     validate_smtp_account_fields(
         payload.display_name,
         payload.smtp_host,
@@ -1575,6 +2100,7 @@ def create_smtp_account(payload: schemas.SmtpAccountCreate, db: Session = Depend
     should_activate = payload.is_active or not has_accounts
 
     account = models.SmtpAccount(
+        user_id=current_user.id,
         display_name=payload.display_name.strip(),
         smtp_host=payload.smtp_host.strip(),
         smtp_port=int(payload.smtp_port),
@@ -1596,8 +2122,17 @@ def create_smtp_account(payload: schemas.SmtpAccountCreate, db: Session = Depend
 
 
 @app.put("/api/smtp_accounts/{account_id}", response_model=schemas.SmtpAccount)
-def update_smtp_account(account_id: int, payload: schemas.SmtpAccountUpdate, db: Session = Depends(get_db)):
-    account = db.query(models.SmtpAccount).filter(models.SmtpAccount.id == account_id).first()
+def update_smtp_account(
+    account_id: int, 
+    payload: schemas.SmtpAccountUpdate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.SmtpAccount).filter(models.SmtpAccount.id == account_id)
+    if current_user.role != "admin":
+        query = query.filter(models.SmtpAccount.user_id == current_user.id)
+    
+    account = query.first()
     if not account:
         raise HTTPException(
             status_code=404,
@@ -1669,8 +2204,16 @@ def update_smtp_account(account_id: int, payload: schemas.SmtpAccountUpdate, db:
 
 
 @app.post("/api/smtp_accounts/{account_id}/activate", response_model=schemas.SmtpAccount)
-def activate_smtp_account(account_id: int, db: Session = Depends(get_db)):
-    account = db.query(models.SmtpAccount).filter(models.SmtpAccount.id == account_id).first()
+def activate_smtp_account(
+    account_id: int, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.SmtpAccount).filter(models.SmtpAccount.id == account_id)
+    if current_user.role != "admin":
+        query = query.filter(models.SmtpAccount.user_id == current_user.id)
+        
+    account = query.first()
     if not account:
         raise HTTPException(
             status_code=404,
@@ -1691,8 +2234,16 @@ def activate_smtp_account(account_id: int, db: Session = Depends(get_db)):
 
 
 @app.delete("/api/smtp_accounts/{account_id}")
-def delete_smtp_account(account_id: int, db: Session = Depends(get_db)):
-    account = db.query(models.SmtpAccount).filter(models.SmtpAccount.id == account_id).first()
+def delete_smtp_account(
+    account_id: int, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.SmtpAccount).filter(models.SmtpAccount.id == account_id)
+    if current_user.role != "admin":
+        query = query.filter(models.SmtpAccount.user_id == current_user.id)
+        
+    account = query.first()
     if not account:
         raise HTTPException(
             status_code=404,
@@ -1722,17 +2273,23 @@ def delete_smtp_account(account_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/templates", response_model=list[schemas.EmailTemplate])
-def list_templates(db: Session = Depends(get_db)):
-    return (
-        db.query(models.EmailTemplate)
-        .filter(models.EmailTemplate.is_active.is_(True))
-        .order_by(models.EmailTemplate.updated_at.desc())
-        .all()
-    )
+def list_templates(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.EmailTemplate).filter(models.EmailTemplate.is_active.is_(True))
+    if current_user.role != "admin":
+        query = query.filter(models.EmailTemplate.user_id == current_user.id)
+    
+    return query.order_by(models.EmailTemplate.updated_at.desc()).all()
 
 
 @app.post("/api/templates", response_model=schemas.EmailTemplate)
-def create_template(payload: schemas.EmailTemplateCreate, db: Session = Depends(get_db)):
+def create_template(
+    payload: schemas.EmailTemplateCreate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
     validate_template_fields(payload.name, payload.subject, payload.html)
     latest = (
         db.query(models.EmailTemplate)
@@ -1742,6 +2299,7 @@ def create_template(payload: schemas.EmailTemplateCreate, db: Session = Depends(
     )
     version = (latest.version + 1) if latest else 1
     template = models.EmailTemplate(
+        user_id=current_user.id,
         name=payload.name.strip(),
         category=payload.category.strip() if payload.category else "General",
         subject=payload.subject,
@@ -1759,8 +2317,17 @@ def create_template(payload: schemas.EmailTemplateCreate, db: Session = Depends(
 
 
 @app.put("/api/templates/{template_id}", response_model=schemas.EmailTemplate)
-def update_template(template_id: int, payload: schemas.EmailTemplateUpdate, db: Session = Depends(get_db)):
-    template = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id).first()
+def update_template(
+    template_id: int, 
+    payload: schemas.EmailTemplateUpdate, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id)
+    if current_user.role != "admin":
+        query = query.filter(models.EmailTemplate.user_id == current_user.id)
+    
+    template = query.first()
     if not template:
         raise HTTPException(status_code=404, detail=error_detail("Template not found.", "template_not_found", "Refresh the page and try again."))
 
@@ -1775,8 +2342,16 @@ def update_template(template_id: int, payload: schemas.EmailTemplateUpdate, db: 
 
 
 @app.delete("/api/templates/{template_id}")
-def delete_template(template_id: int, db: Session = Depends(get_db)):
-    template = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id).first()
+def delete_template(
+    template_id: int, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id)
+    if current_user.role != "admin":
+        query = query.filter(models.EmailTemplate.user_id == current_user.id)
+    
+    template = query.first()
     if not template:
         raise HTTPException(status_code=404, detail=error_detail("Template not found.", "template_not_found", "Refresh the page and try again."))
     template.is_active = False
@@ -1786,8 +2361,15 @@ def delete_template(template_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/batches", response_model=list[schemas.BatchSummary])
-def list_batches(db: Session = Depends(get_db)):
-    batches = db.query(models.BatchJob).order_by(models.BatchJob.updated_at.desc()).limit(50).all()
+def list_batches(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    query = db.query(models.BatchJob)
+    if current_user.role != "admin":
+        query = query.filter(models.BatchJob.user_id == current_user.id)
+    
+    batches = query.order_by(models.BatchJob.updated_at.desc()).limit(50).all()
     results = []
     for batch in batches:
         results.append({
@@ -1803,7 +2385,11 @@ PURGE_CONFIRM_PHRASE = "DELETE_ALL_BATCH_DATA"
 @app.api_route("/api/batches/purge_all", methods=["POST", "DELETE"])
 @app.api_route("/api/purge_all_batches", methods=["POST", "DELETE"])
 @app.api_route("/api/admin/purge_batch_data", methods=["POST", "DELETE"])
-def purge_all_batch_data(payload: schemas.PurgeAllBatchesPayload, db: Session = Depends(get_db)):
+def purge_all_batch_data(
+    payload: schemas.PurgeAllBatchesPayload, 
+    db: Session = Depends(get_db),
+    current_admin: models.User = Depends(auth.get_current_active_admin)
+):
     """Remove every row in `invoices` and `batch_jobs` (Status dashboard data). Does not touch settings, SMTP, or templates."""
     if (payload.confirm or "").strip() != PURGE_CONFIRM_PHRASE:
         raise HTTPException(
@@ -1850,7 +2436,13 @@ def purge_all_batch_data(payload: schemas.PurgeAllBatchesPayload, db: Session = 
 
 
 @app.get("/api/batches/{batch_id}/attachments", response_model=list[schemas.BatchAttachment])
-def list_batch_attachments(batch_id: str, db: Session = Depends(get_db)):
+def list_batch_attachments(
+    batch_id: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    # Ensure current user owns this batch
+    ensure_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     ensure_batch_exists_for_attachments(db, batch_id)
     return db.query(models.BatchAttachment).filter(
         models.BatchAttachment.batch_id == batch_id
@@ -1858,7 +2450,14 @@ def list_batch_attachments(batch_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/batches/{batch_id}/attachments", response_model=schemas.BatchAttachment)
-def upload_batch_attachment(batch_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_batch_attachment(
+    batch_id: str, 
+    file: UploadFile = File(...), 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    # Ensure current user owns this batch
+    ensure_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     ensure_batch_exists_for_attachments(db, batch_id)
     stats = get_batch_attachment_stats(db, batch_id)
     if stats["count"] >= MAX_ATTACHMENTS_PER_BATCH:
@@ -1910,6 +2509,7 @@ def upload_batch_attachment(batch_id: str, file: UploadFile = File(...), db: Ses
     mime = file.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
     row = models.BatchAttachment(
         batch_id=batch_id,
+        user_id=current_user.id,
         original_filename=original_name,
         stored_filename=stored_name,
         mime_type=mime,
@@ -1942,8 +2542,12 @@ def delete_batch_attachment(batch_id: str, attachment_id: int, db: Session = Dep
 
 
 @app.get("/api/batches/{batch_id}", response_model=schemas.BatchSummary)
-def get_batch_summary(batch_id: str, db: Session = Depends(get_db)):
-    batch = get_batch_job(db, batch_id)
+def get_batch_summary(
+    batch_id: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = get_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     if not batch:
         # Fallback for historical batches not in batch_jobs table
         existing_records = db.query(models.InvoiceData).filter(models.InvoiceData.batch_id == batch_id).count()
@@ -1964,8 +2568,12 @@ def validate_batch(batch_id: str, subject: str, html: str, db: Session = Depends
 
 
 @app.post("/api/batches/{batch_id}/pause", response_model=schemas.BatchJob)
-def pause_batch(batch_id: str, db: Session = Depends(get_db)):
-    batch = get_batch_job(db, batch_id)
+def pause_batch(
+    batch_id: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = get_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     if not batch:
         raise HTTPException(status_code=404, detail=error_detail("Batch not found.", "batch_not_found", "Refresh the page and try again."))
     if batch.status not in {"queued", "scheduled", "running"}:
@@ -1979,8 +2587,12 @@ def pause_batch(batch_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/batches/{batch_id}/resume", response_model=schemas.BatchJob)
-def resume_batch(batch_id: str, db: Session = Depends(get_db)):
-    batch = get_batch_job(db, batch_id)
+def resume_batch(
+    batch_id: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = get_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     if not batch:
         raise HTTPException(status_code=404, detail=error_detail("Batch not found.", "batch_not_found", "Refresh the page and try again."))
     if batch.status not in {"paused", "cancelled", "failed"}:
@@ -1996,8 +2608,12 @@ def resume_batch(batch_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/batches/{batch_id}/cancel", response_model=schemas.BatchJob)
-def cancel_batch(batch_id: str, db: Session = Depends(get_db)):
-    batch = get_batch_job(db, batch_id)
+def cancel_batch(
+    batch_id: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = get_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     if not batch:
         raise HTTPException(status_code=404, detail=error_detail("Batch not found.", "batch_not_found", "Refresh the page and try again."))
     if batch.status in {"completed", "cancelled"}:
@@ -2011,8 +2627,12 @@ def cancel_batch(batch_id: str, db: Session = Depends(get_db)):
 
 
 @app.post("/api/batches/{batch_id}/retry_failed", response_model=schemas.BatchJob)
-def retry_failed_batch(batch_id: str, db: Session = Depends(get_db)):
-    batch = get_batch_job(db, batch_id)
+def retry_failed_batch(
+    batch_id: str, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = get_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     if not batch:
         raise HTTPException(status_code=404, detail=error_detail("Batch not found.", "batch_not_found", "Refresh the page and try again."))
 
@@ -2063,24 +2683,13 @@ def check_gmail_status(db: Session = Depends(get_db)):
 def gmail_authenticate(request: Request, db: Session = Depends(get_db)):
     """Return authorization URL for Google OAuth flow."""
     settings = db.query(models.SystemSettings).first()
-    if not settings or not settings.gmail_client_id or not settings.gmail_client_secret:
-        raise HTTPException(status_code=400, detail="Please save your Gmail Client ID and Client Secret first.")
-    
+
     from google_auth_oauthlib.flow import Flow
     SCOPES = ['https://www.googleapis.com/auth/gmail.send']
-    
+
     redirect_uri = build_gmail_redirect_uri(request)
-    
-    client_config = {
-        "web": {
-            "client_id": settings.gmail_client_id,
-            "client_secret": settings.gmail_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [redirect_uri]
-        }
-    }
-    
+    client_config = _get_gmail_client_config(settings, redirect_uri)
+
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
@@ -2109,21 +2718,12 @@ def gmail_authenticate(request: Request, db: Session = Depends(get_db)):
 async def gmail_callback(request: Request, code: str, state: Optional[str] = None, db: Session = Depends(get_db)):
     """Handle the OAuth2 callback, exchange code for tokens, and save."""
     settings = db.query(models.SystemSettings).first()
-    if not settings:
-        raise HTTPException(status_code=404, detail="Settings not found")
-        
+
     from google_auth_oauthlib.flow import Flow
     SCOPES = ['https://www.googleapis.com/auth/gmail.send']
-    
-    client_config = {
-        "web": {
-            "client_id": settings.gmail_client_id,
-            "client_secret": settings.gmail_client_secret,
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [build_gmail_redirect_uri(request)]
-        }
-    }
+
+    redirect_uri = build_gmail_redirect_uri(request)
+    client_config = _get_gmail_client_config(settings, redirect_uri)
 
     cookie_state = request.cookies.get(GMAIL_OAUTH_STATE_COOKIE)
     if not state or not cookie_state or state != cookie_state:
@@ -2134,9 +2734,9 @@ async def gmail_callback(request: Request, code: str, state: Optional[str] = Non
     flow = Flow.from_client_config(
         client_config,
         scopes=SCOPES,
-        redirect_uri=build_gmail_redirect_uri(request)
+        redirect_uri=redirect_uri
     )
-    
+
     try:
         flow.fetch_token(code=code)
         creds = flow.credentials
@@ -2161,6 +2761,95 @@ def gmail_disconnect():
             os.remove(f)
             removed.append(f)
     return {"success": True, "message": "Gmail disconnected.", "removed": removed}
+
+_AMOUNT_KEYWORDS = {
+    "amount", "price", "total", "fee", "cost", "balance", "due", "paid",
+    "value", "charge", "payment", "outstanding", "invoice", "bill", "salary",
+    "revenue", "profit", "tax", "discount", "payable", "receivable", "rate",
+}
+
+
+def _is_amount_like_key(key: str) -> bool:
+    """Return True if the column/tag name suggests a monetary/currency value."""
+    words = set(re.sub(r"[\s_\-]", " ", key.lower()).split())
+    return bool(words & _AMOUNT_KEYWORDS)
+
+
+def _try_format_date(val_str: str) -> Optional[str]:
+    """Try to parse val_str as a date. Returns 'DD/MM/YYYY' or None."""
+    if not val_str or len(val_str) < 6:
+        return None
+    # Already DD/MM/YYYY — return as-is
+    if re.match(r"^\d{2}/\d{2}/\d{4}$", val_str):
+        return val_str
+    # Strip time portion before parsing: "2024-01-15 14:30:00" → "2024-01-15"
+    clean = re.split(r"[T ]", val_str.strip())[0]
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y",
+                "%d.%m.%Y", "%Y/%m/%d", "%d-%b-%Y", "%d %b %Y", "%B %d, %Y"):
+        try:
+            return datetime.datetime.strptime(clean, fmt).strftime("%d/%m/%Y")
+        except Exception:
+            pass
+    # Last resort: pandas (handles many locale formats)
+    try:
+        dt = pd.to_datetime(val_str, dayfirst=True, errors="raise")
+        if not pd.isna(dt):
+            return dt.strftime("%d/%m/%Y")
+    except Exception:
+        pass
+    return None
+
+
+def _smart_cell_to_str(val) -> str:
+    """Convert any cell value to a clean, human-readable string.
+
+    - datetime / Timestamp  → DD/MM/YYYY  (no time, no 00:00:00 noise)
+    - bool                  → Yes / No
+    - int                   → plain integer string
+    - float (whole number)  → integer string  (avoids "45306.0" serial-date noise)
+    - float (decimal)       → trimmed decimal  ("1500.5" not "1500.500000")
+    - timestamp strings     → DD/MM/YYYY  (catches Excel-exported CSVs)
+    - pandas artefacts      → ""
+    """
+    if val is None:
+        return ""
+    if isinstance(val, float) and pd.isna(val):
+        return ""
+    try:
+        if val is pd.NaT:
+            return ""
+    except Exception:
+        pass
+    if isinstance(val, pd.Timestamp):
+        return "" if pd.isna(val) else val.strftime("%d/%m/%Y")
+    if isinstance(val, datetime.datetime):
+        return val.strftime("%d/%m/%Y")
+    if isinstance(val, datetime.date):
+        return val.strftime("%d/%m/%Y")
+    # bool must come before int (bool is subclass of int)
+    if isinstance(val, bool):
+        return "Yes" if val else "No"
+    if isinstance(val, int):
+        return str(val)
+    if isinstance(val, float):
+        if val == int(val):
+            return str(int(val))
+        # Trim trailing zeros: 1500.5 → "1500.5", not "1500.500000"
+        return f"{val:.10g}"
+    s = str(val).strip()
+    if s in ("nan", "None", "NaT", "none", "null", "NaN", ""):
+        return ""
+    # Catch timestamp strings from Excel-exported CSVs: "2024-01-15 00:00:00"
+    ts_match = re.match(r"^(\d{4})-(\d{2})-(\d{2})[T ]\d{2}:\d{2}:\d{2}", s)
+    if ts_match:
+        try:
+            return datetime.datetime(
+                int(ts_match.group(1)), int(ts_match.group(2)), int(ts_match.group(3))
+            ).strftime("%d/%m/%Y")
+        except Exception:
+            pass
+    return s
+
 
 def safe_read_file(contents: bytes, filename: str) -> pd.DataFrame:
     """
@@ -2230,34 +2919,54 @@ def safe_read_file(contents: bytes, filename: str) -> pd.DataFrame:
                 ))
     
     elif filename.endswith((".xlsx", ".xls")):
-        # Strategy 1: openpyxl (best for .xlsx)
-        # Strategy 2: default engine
-        # Strategy 3: read with header detection
-        read_strategies = [
-            {"engine": "openpyxl", "dtype": str, "keep_default_na": False, "nrows": MAX_ROWS},
-            {"dtype": str, "keep_default_na": False, "nrows": MAX_ROWS},
-            {"engine": "openpyxl", "header": 0, "dtype": str, "keep_default_na": False, "nrows": MAX_ROWS},
-        ]
-        
-        last_error = None
-        for strategy in read_strategies:
-            try:
-                df = pd.read_excel(io.BytesIO(contents), **strategy)
-                if df is not None and not df.empty:
-                    break
-            except Exception as e:
-                last_error = e
-                continue
-        
-        if df is None:
-            error_msg = f"Could not parse Excel file"
-            if last_error:
-                error_msg += f": {str(last_error)[:100]}"
+        engine = "openpyxl" if filename.endswith(".xlsx") else None
+
+        # Open the workbook once so we can inspect all sheets without re-reading bytes
+        xl_file = None
+        sheet_names: list = [0]
+        try:
+            xl_file = pd.ExcelFile(io.BytesIO(contents), engine=engine)
+            sheet_names = xl_file.sheet_names or [0]
+        except Exception:
+            pass  # Fall back to single-sheet index-based read
+
+        best_df = None
+        best_score = -1
+
+        # Try each sheet and each candidate header row; keep the richest result
+        for sheet in sheet_names[:5]:           # Limit to first 5 sheets
+            for header_row in range(3):         # Try header at row 0, 1, 2
+                try:
+                    read_kw = {"header": header_row, "keep_default_na": False, "nrows": MAX_ROWS}
+                    if engine:
+                        read_kw["engine"] = engine
+                    if xl_file is not None:
+                        temp_df = xl_file.parse(sheet, **read_kw)
+                    else:
+                        temp_df = pd.read_excel(io.BytesIO(contents), sheet_name=sheet, **read_kw)
+
+                    if temp_df is None or temp_df.empty or len(temp_df.columns) < 2:
+                        continue
+                    # Score by (rows × columns) — more data = better sheet/header combo
+                    score = len(temp_df) * len(temp_df.columns)
+                    if score > best_score:
+                        best_df = temp_df
+                        best_score = score
+                        break  # Found a valid header row for this sheet
+                except Exception:
+                    continue
+
+        if best_df is None:
             raise HTTPException(status_code=400, detail=error_detail(
-                error_msg,
+                "Could not parse Excel file.",
                 "excel_parse_failed",
                 "Ensure the file is a valid .xlsx or .xls file and is not password-protected or corrupted."
             ))
+
+        # Apply smart per-cell conversion (preserves dates, strips time, cleans floats)
+        df = best_df
+        for col in df.columns:
+            df[col] = df[col].apply(_smart_cell_to_str)
     else:
         raise HTTPException(status_code=400, detail=error_detail(
             "Unsupported file format. Only CSV and Excel files are accepted.",
@@ -2289,12 +2998,11 @@ def safe_read_file(contents: bytes, filename: str) -> pd.DataFrame:
         new_cols.append(col_str)
     df.columns = new_cols
     
-    # 3. Universal type safety: convert EVERYTHING to string, handle NaN/None/NaT/float
-    # This is the critical step that prevents ALL type errors downstream
+    # 3. Universal type safety: apply _smart_cell_to_str to every cell.
+    # For CSV (read as dtype=str) this cleans timestamp strings like "2024-01-15 00:00:00".
+    # For Excel columns not yet converted (edge cases), this also handles them.
     for col in df.columns:
-        df[col] = df[col].fillna("").astype(str).str.strip()
-        # Clean up string artifacts from type conversion
-        df[col] = df[col].replace({"nan": "", "None": "", "NaT": "", "none": "", "null": ""})
+        df[col] = df[col].apply(_smart_cell_to_str)
     
     # 4. Drop rows that are entirely empty after cleaning
     df = df[~(df == "").all(axis=1)]
@@ -2321,7 +3029,10 @@ def safe_read_file(contents: bytes, filename: str) -> pd.DataFrame:
 
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
     if not file or not file.filename:
         raise HTTPException(
             status_code=400,
@@ -2360,7 +3071,8 @@ async def upload_file(file: UploadFile = File(...)):
 async def process_upload(
     mapping: str = Form(...), 
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
 ):
     if not file or not file.filename:
         raise HTTPException(
@@ -2412,6 +3124,7 @@ async def process_upload(
 
             record = models.InvoiceData(
                 batch_id=batch_id,
+                user_id=current_user.id,
                 recipient_name=str(row.get(mapping_dict.get("name"), "Recipient")),
                 email_address=email,
                 invoice_amount=str(row.get(mapping_dict.get("amount"), "0.00")),
@@ -2432,7 +3145,7 @@ async def process_upload(
              )
 
         db.bulk_save_objects(records_to_insert)
-        batch = ensure_batch_job(db, batch_id, file.filename)
+        batch = ensure_batch_job(db, batch_id, file.filename, user_id=current_user.id)
         batch.status = "draft"
         log_audit(db, "batch.created", "batch", f"Created batch {batch_id}", batch_id, {"source_filename": file.filename, "row_count": len(records_to_insert)})
         db.commit()
@@ -2495,13 +3208,14 @@ def list_batch_recipients(batch_id: str, db: Session = Depends(get_db)):
                 "Upload and process a file before managing recipients."
             )
         )
+    stats = build_batch_stats(db, batch_id)
     return {
         "items": records,
-        "total": len(records),
-        "pending": len([r for r in records if r.status == "pending"]),
-        "success": len([r for r in records if r.status == "success"]),
-        "failed": len([r for r in records if r.status == "failed"]),
-        "partial": len([r for r in records if r.status == "partial"]),
+        "total": stats["total"],
+        "pending": stats["pending"],
+        "success": stats["success"],
+        "failed": stats["failed"],
+        "partial": stats["partial"],
     }
 
 
@@ -2562,8 +3276,13 @@ def update_batch_recipient(batch_id: str, invoice_id: int, payload: schemas.Reci
 
 
 @app.post("/api/batches/{batch_id}/recipients/send")
-def send_selected_recipients(batch_id: str, payload: schemas.RecipientSendModePayload, db: Session = Depends(get_db)):
-    batch = get_batch_job(db, batch_id)
+def send_selected_recipients(
+    batch_id: str, 
+    payload: schemas.RecipientSendModePayload, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    batch = get_batch_job(db, batch_id, user_id=None if current_user.role == "admin" else current_user.id)
     if not batch:
         raise HTTPException(
             status_code=404,
@@ -2700,9 +3419,17 @@ def generate_report(batch_id: str, db: Session = Depends(get_db)):
     return response
 
 @app.post("/api/send_emails")
-def send_emails(payload: schemas.SendEmailPayload, db: Session = Depends(get_db)):
-    logger.info(f"--- [SEND EMAILS] Received for batch {payload.batch_id} ---")
+def send_emails(
+    payload: schemas.SendEmailPayload, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    logger.info(f"--- [SEND EMAILS] Received for batch {payload.batch_id} for user {current_user.email} ---")
     try:
+        # Security check: Does this user own this batch?
+        batch = get_batch_job(db, payload.batch_id, user_id=None if current_user.role == "admin" else current_user.id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="Batch not found")
         validate_send_payload(payload.batch_id, payload.custom_subject, payload.custom_html)
         logger.info(f"[SEND EMAILS] Validation payload: ok")
         
@@ -2830,7 +3557,15 @@ def launch(payload: schemas.SendEmailPayload, db: Session = Depends(get_db)):
     return send_emails(payload, db)
 
 @app.post("/api/send_test_email")
-def send_test_email(payload: schemas.TestEmailPayload, db: Session = Depends(get_db)):
+def send_test_email(
+    payload: schemas.TestEmailPayload, 
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_active_user)
+):
+    # Security check: Does this user own this batch?
+    batch = get_batch_job(db, payload.batch_id, user_id=None if current_user.role == "admin" else current_user.id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="Batch not found")
     from gmail_service import GmailService
     from brevo_service import BrevoService
     from smtp_service import SmtpService

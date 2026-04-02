@@ -229,7 +229,7 @@ export default function Dashboard() {
                                />
                             </Box>
                              <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
-                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.65rem' }}>{b.stats?.total || 0} RECORDS</Typography>
+                                <Typography variant="caption" sx={{ fontWeight: 600, color: 'var(--text-muted)', fontSize: '0.65rem' }}>{b.stats?.total || 0} EMAILS</Typography>
                                 <Typography variant="caption" sx={{ fontWeight: 700, color: 'var(--text-main)', fontSize: '0.65rem' }}>{new Date(b.batch.created_at || Date.now()).toLocaleDateString()}</Typography>
                              </Box>
                              {b.batch.status !== 'completed' && b.stats?.total > 0 && (

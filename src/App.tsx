@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, useEffect, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, NavLink, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, NavLink, useLocation, Navigate } from 'react-router-dom';
 import axios from 'axios';
 import { 
   Box, 
@@ -11,32 +11,45 @@ import {
   Container,
   Typography,
   Button,
+  Chip,
+  Menu,
+  MenuItem,
+  Avatar,
 } from '@mui/material';
 import {
   AddCircleOutline as StartIcon,
   Dashboard as DashboardIcon,
   Settings as SettingsIcon,
+  PeopleAlt as UsersIcon,
+  Logout as LogoutIcon,
+  KeyboardArrowDown as ArrowDownIcon,
 } from '@mui/icons-material';
 
 import FileUpload from './pages/FileUpload';
 import ConfigurationStudio from './pages/ConfigurationStudio';
+import LoginPage from './pages/LoginPage';
+import UserManagement from './pages/UserManagement';
+import ProtectedRoute from './components/ProtectedRoute';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import './index.css';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 
 const SystemStatusBadge = () => {
     const [status, setStatus] = useState<{ provider: string | null, smtp: string | null }>({ provider: null, smtp: null });
+    const { token } = useAuth();
     
     useEffect(() => {
+        if (!token) return;
         const fetchStatus = () => {
             axios.get('/api/settings').then(res => {
                 setStatus({ provider: res.data.active_provider, smtp: res.data.active_smtp_name });
             }).catch(() => {});
         };
         fetchStatus();
-        const interval = setInterval(fetchStatus, 30000); // Refresh every 30s
+        const interval = setInterval(fetchStatus, 30000);
         return () => clearInterval(interval);
-    }, []);
+    }, [token]);
 
     const label = status.provider === 'SMTP' || status.provider === 'GMAIL_SMTP' 
         ? (status.smtp || 'SMTP Bridge') 
@@ -70,23 +83,66 @@ const SystemStatusBadge = () => {
     );
 };
 
+const UserMenu = () => {
+    const { user, logout } = useAuth();
+    const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+
+    if (!user) return null;
+
+    return (
+        <>
+            <Chip
+                avatar={<Avatar sx={{ width: 24, height: 24, bgcolor: '#1666d3', fontSize: '0.7rem' }}>{user.email[0].toUpperCase()}</Avatar>}
+                label={user.email.split('@')[0]}
+                deleteIcon={<ArrowDownIcon sx={{ fontSize: '16px !important' }} />}
+                onDelete={(e) => setAnchorEl(e.currentTarget)}
+                onClick={(e) => setAnchorEl(e.currentTarget)}
+                sx={{
+                    fontWeight: 700,
+                    fontSize: '0.78rem',
+                    bgcolor: 'rgba(241, 245, 249, 0.95)',
+                    border: '1px solid rgba(226, 232, 240, 0.9)',
+                    cursor: 'pointer',
+                    '&:hover': { bgcolor: '#fff' },
+                    display: { xs: 'none', md: 'flex' },
+                }}
+            />
+            <Menu
+                anchorEl={anchorEl}
+                open={Boolean(anchorEl)}
+                onClose={() => setAnchorEl(null)}
+                PaperProps={{ sx: { mt: 1, borderRadius: 2, border: '1px solid #e2e8f0', boxShadow: '0 8px 32px rgba(15,23,42,0.1)' } }}
+            >
+                <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #f1f5f9' }}>
+                    <Typography variant="caption" sx={{ color: '#94a3b8', display: 'block' }}>Signed in as</Typography>
+                    <Typography variant="body2" fontWeight={700} sx={{ color: '#0f172a' }}>{user.email}</Typography>
+                    <Chip label={user.role} size="small" sx={{ mt: 0.5, height: 18, fontSize: '0.65rem', fontWeight: 700, textTransform: 'capitalize', bgcolor: user.role === 'admin' ? '#eff6ff' : '#f1f5f9', color: user.role === 'admin' ? '#1666d3' : '#475569' }} />
+                </Box>
+                <MenuItem onClick={() => { logout(); setAnchorEl(null); }} sx={{ gap: 1.5, color: '#dc2626', fontWeight: 600, py: 1.5 }}>
+                    <LogoutIcon fontSize="small" />
+                    Sign Out
+                </MenuItem>
+            </Menu>
+        </>
+    );
+};
+
 const AppLayout = ({ children }: { children: React.ReactNode }) => {
     const [scrolled, setScrolled] = useState(false);
-
+    const { user } = useAuth();
     const location = useLocation();
     
-    // Senior QA: Smart Presence (Dynamic Tab Titles)
     useEffect(() => {
         const routeMap: Record<string, string> = {
             '/': 'Email Builder',
             '/dashboard': 'Email Status',
-            '/settings': 'Settings'
+            '/settings': 'Settings',
+            '/users': 'User Management',
         };
         const title = routeMap[location.pathname] || 'MailMerge Studio';
         document.title = `IKF | ${title}`;
     }, [location.pathname]);
 
-    // Senior QA: Global Safety Net (Logical Error Catching)
     useEffect(() => {
         const handleError = (e: ErrorEvent) => {
             console.error("Studio Runtime Exception:", e.error);
@@ -105,12 +161,8 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
             <header className={`studio-header ${scrolled ? 'scrolled' : ''}`}>
                 <Container maxWidth={false} sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: { xs: 2, md: 6 } }}>
                     {/* Logo Area */}
-                    {/* Logo Area: High-Precision Reset Control */}
                     <Box 
-                        onClick={() => {
-                            localStorage.removeItem('ikf_mailmerge_session');
-                            window.location.href = '/';
-                        }}
+                        onClick={() => { window.location.href = '/'; }}
                         sx={{ 
                             textDecoration: 'none', 
                             display: 'flex', 
@@ -139,58 +191,61 @@ const AppLayout = ({ children }: { children: React.ReactNode }) => {
                     </Box>
 
                     {/* Centered Navigation */}
-                    <nav className="nav-container" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
-                        {[
-                            { path: '/', label: 'Build', icon: <StartIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
-                            { path: '/dashboard', label: 'Status', icon: <DashboardIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
-                            { path: '/settings', label: 'Settings', icon: <SettingsIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
-                        ].map((item) => (
-                            <NavLink 
-                                key={item.path} 
-                                to={item.path} 
-                                className={({ isActive }) => `studio-nav-link ${isActive ? 'active' : ''}`}
-                            >
-                                <Box display="flex" alignItems="center" gap={1}>
-                                    {item.icon}
-                                    <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>{item.label}</Box>
-                                </Box>
-                            </NavLink>
-                        ))}
-                    </nav>
+                    {user && (
+                        <nav className="nav-container" style={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
+                            {[
+                                { path: '/', label: 'Build', icon: <StartIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
+                                { path: '/dashboard', label: 'Status', icon: <DashboardIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
+                                { path: '/settings', label: 'Settings', icon: <SettingsIcon sx={{ fontSize: 18, opacity: 0.92 }} /> },
+                                ...(user.role === 'admin' ? [{ path: '/users', label: 'Users', icon: <UsersIcon sx={{ fontSize: 18, opacity: 0.92 }} /> }] : []),
+                            ].map((item) => (
+                                <NavLink 
+                                    key={item.path} 
+                                    to={item.path} 
+                                    className={({ isActive }) => `studio-nav-link ${isActive ? 'active' : ''}`}
+                                >
+                                    <Box display="flex" alignItems="center" gap={1}>
+                                        {item.icon}
+                                        <Box component="span" sx={{ display: { xs: 'none', md: 'inline' } }}>{item.label}</Box>
+                                    </Box>
+                                </NavLink>
+                            ))}
+                        </nav>
+                    )}
 
                     {/* Right Status & Action Area */}
                     <Box display="flex" alignItems="center" gap={2}>
-                        <Button
-                            onClick={() => {
-                                localStorage.removeItem('ikf_mailmerge_session');
-                                window.location.href = '/';
-                            }}
-                            sx={{
-                                color: '#1e293b',
-                                fontSize: { xs: '0.72rem', md: '0.78rem' },
-                                fontWeight: 700,
-                                textTransform: 'none',
-                                letterSpacing: '0.02em',
-                                borderRadius: '999px',
-                                border: 'none',
-                                px: 2.25,
-                                py: 1,
-                                display: { xs: 'none', lg: 'flex' },
-                                gap: 1,
-                                bgcolor: 'rgba(241, 245, 249, 0.95)',
-                                boxShadow: '0 2px 12px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255,255,255,0.9)',
-                                transition: 'all 0.25s ease',
-                                '&:hover': { 
-                                    bgcolor: '#fff',
-                                    boxShadow: '0 4px 18px rgba(22, 102, 211, 0.12)',
-                                    transform: 'translateY(-1px)',
-                                },
-                            }}
-                        >
-                            <StartIcon sx={{ fontSize: 18, color: 'var(--primary)', opacity: 0.95 }} />
-                            Start new
-                        </Button>
+                        {user && (
+                            <Button
+                                onClick={() => { window.location.href = '/'; }}
+                                sx={{
+                                    color: '#1e293b',
+                                    fontSize: { xs: '0.72rem', md: '0.78rem' },
+                                    fontWeight: 700,
+                                    textTransform: 'none',
+                                    letterSpacing: '0.02em',
+                                    borderRadius: '999px',
+                                    border: 'none',
+                                    px: 2.25,
+                                    py: 1,
+                                    display: { xs: 'none', lg: 'flex' },
+                                    gap: 1,
+                                    bgcolor: 'rgba(241, 245, 249, 0.95)',
+                                    boxShadow: '0 2px 12px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255,255,255,0.9)',
+                                    transition: 'all 0.25s ease',
+                                    '&:hover': { 
+                                        bgcolor: '#fff',
+                                        boxShadow: '0 4px 18px rgba(22, 102, 211, 0.12)',
+                                        transform: 'translateY(-1px)',
+                                    },
+                                }}
+                            >
+                                <StartIcon sx={{ fontSize: 18, color: 'var(--primary)', opacity: 0.95 }} />
+                                Start new
+                            </Button>
+                        )}
                         <SystemStatusBadge />
+                        <UserMenu />
                     </Box>
                 </Container>
             </header>
@@ -232,17 +287,28 @@ function App() {
         <ThemeProvider theme={theme}>
             <CssBaseline />
             <BrowserRouter>
-                <AppLayout>
-                    <Routes>
-                        <Route path="/" element={<FileUpload />} />
-                        <Route path="/dashboard" element={<Dashboard />} />
-                        <Route path="/status/:batchId" element={<Dashboard />} />
-                        <Route path="/settings" element={<ConfigurationStudio />} />
-                    </Routes>
-                </AppLayout>
+                <AuthProvider>
+                    <AppLayout>
+                        <Routes>
+                            {/* Public route */}
+                            <Route path="/auth" element={<LoginPage />} />
+                            
+                            {/* Protected routes */}
+                            <Route path="/" element={<ProtectedRoute><FileUpload /></ProtectedRoute>} />
+                            <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                            <Route path="/status/:batchId" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                            <Route path="/settings" element={<ProtectedRoute><ConfigurationStudio /></ProtectedRoute>} />
+                            <Route path="/users" element={<ProtectedRoute requireAdmin><UserManagement /></ProtectedRoute>} />
+                            
+                            {/* Catch-all */}
+                            <Route path="*" element={<Navigate to="/" replace />} />
+                        </Routes>
+                    </AppLayout>
+                </AuthProvider>
             </BrowserRouter>
         </ThemeProvider>
     );
 }
 
 export default App;
+

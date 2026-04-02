@@ -1,6 +1,42 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, Any
 from datetime import datetime
+
+class UserBase(BaseModel):
+    email: EmailStr
+
+class UserCreate(UserBase):
+    password: str
+
+class UserLogin(UserBase):
+    password: str
+
+class UserResponse(UserBase):
+    id: int
+    is_approved: bool
+    role: str
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class GoogleLoginRequest(BaseModel):
+    credential: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(min_length=8)
+
+class PublicConfig(BaseModel):
+    google_client_id: Optional[str] = None
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user: UserResponse
 
 class InvoiceBase(BaseModel):
     recipient_name: str
@@ -34,9 +70,9 @@ class SystemSettingsBase(BaseModel):
     smtp_port: Optional[int] = 465
     smtp_user: Optional[str] = None
     email_template_subject: Optional[str] = "Professional Update: {{Name}}"
-    email_template_html: Optional[str] = None
+    email_template_html: Optional[str] = Field(default=None, max_length=1_000_000)
     email_template_creative_subject: Optional[str] = "An exciting update for you, {{Name}}!"
-    email_template_creative_html: Optional[str] = None
+    email_template_creative_html: Optional[str] = Field(default=None, max_length=1_000_000)
     active_template_type: Optional[str] = "PROFESSIONAL" # PROFESSIONAL, CREATIVE
     email_template_is_html: bool = True
     active_smtp_name: Optional[str] = None
@@ -60,9 +96,9 @@ class SystemSettingsUpdate(BaseModel):
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
     email_template_subject: Optional[str] = None
-    email_template_html: Optional[str] = None
+    email_template_html: Optional[str] = Field(default=None, max_length=1_000_000)
     email_template_creative_subject: Optional[str] = None
-    email_template_creative_html: Optional[str] = None
+    email_template_creative_html: Optional[str] = Field(default=None, max_length=1_000_000)
     active_template_type: Optional[str] = None
     email_template_is_html: Optional[bool] = None
     active_smtp_name: Optional[str] = None
@@ -84,7 +120,7 @@ class SendEmailPayload(BaseModel):
     batch_id: str
     template_type: Optional[str] = "PROFESSIONAL" # PROFESSIONAL, CREATIVE
     custom_subject: Optional[str] = None
-    custom_html: Optional[str] = None
+    custom_html: Optional[str] = Field(default=None, max_length=1_000_000)
     is_html: bool = True
     scheduled_for: Optional[datetime] = None
     campaign_pacing: Optional[CampaignPacingPayload] = None
@@ -102,7 +138,7 @@ class RecipientSendModePayload(BaseModel):
     invoice_id: Optional[int] = None
     invoice_ids: Optional[list[int]] = None
     custom_subject: Optional[str] = None
-    custom_html: Optional[str] = None
+    custom_html: Optional[str] = Field(default=None, max_length=1_000_000)
     is_html: bool = True
     template_type: Optional[str] = "PROFESSIONAL"
 
@@ -124,7 +160,7 @@ class TestEmailPayload(BaseModel):
     batch_id: str
     test_email: str
     custom_subject: Optional[str] = None
-    custom_html: Optional[str] = None
+    custom_html: Optional[str] = Field(default=None, max_length=1_000_000)
     is_html: bool = True
     template_type: str = "PROFESSIONAL"
 
@@ -166,7 +202,7 @@ class BatchJobBase(BaseModel):
     status: str
     provider: Optional[str] = None
     custom_subject: Optional[str] = None
-    custom_html: Optional[str] = None
+    custom_html: Optional[str] = Field(default=None, max_length=1_000_000)
     template_type: str = "PROFESSIONAL"
     is_html: bool = True
     scheduled_for: Optional[datetime] = None

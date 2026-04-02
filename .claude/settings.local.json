@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -lah *.csv *.xlsx *.db)",
+      "Bash(xargs wc:*)",
+      "Bash(python3 -c \"import secrets; print\\(secrets.token_urlsafe\\(32\\)\\)\")",
+      "Read(///192.168.2.100/Automated Invoice Email System//**)",
+      "Bash(npm --version)",
+      "Bash(VITE_ADMIN_ACCESS_TOKEN=Ayp9rJFkDujwlz6NttC76vuLCmosakvdk2kEdhAsg-Y npm run build)",
+      "Bash(net use:*)",
+      "Bash(subst Z: \"\\\\\\\\\\\\\\\\192.168.2.100\\\\\\\\Automated Invoice Email System\")",
+      "Bash(VITE_ADMIN_ACCESS_TOKEN=Ayp9rJFkDujwlz6NttC76vuLCmosakvdk2kEdhAsg-Y npx vite build)",
+      "Bash(subst Z: \"\\\\\\\\192.168.2.100\\\\Automated Invoice Email System\")",
+      "Bash(ls /mnt/)",
+      "Bash(ls /cygdrive/)",
+      "Read(//c//**)",
+      "Bash(mkdir -p /c/temp/ikf_build)",
+      "Bash(cp -r \"//192.168.2.100/Automated Invoice Email System/src\" /c/temp/ikf_build/)",
+      "Bash(cp -r \"//192.168.2.100/Automated Invoice Email System/public\" /c/temp/ikf_build/)",
+      "Bash(cp \"//192.168.2.100/Automated Invoice Email System/package.json\" /c/temp/ikf_build/)",
+      "Bash(cp \"//192.168.2.100/Automated Invoice Email System/tsconfig.json\" /c/temp/ikf_build/)",
+      "Bash(cmd /c \"pm2 restart ikf-backend 2>&1\")",
+      "Bash(npm run:*)",
+      "Bash(npx vite:*)",
+      "Bash(cmd /c \"pushd \\\\\\\\\\\\\\\\192.168.2.100\\\\\\\\\\\\\"Automated Invoice Email System\\\\\" && npx vite build 2>&1\")",
+      "Bash(node node_modules/.bin/vite build)",
+      "Bash(node node_modules/vite/bin/vite.js build)",
+      "Bash(wmic logicaldisk:*)",
+      "Bash([ ! -f /tmp/ikf_build/src/pages/LoginPage.tsx ])"
+    ]
+  }
+}

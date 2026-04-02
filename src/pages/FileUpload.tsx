@@ -53,7 +53,7 @@ const Toast = Swal.mixin({
   color: '#0f172a',
 });
 
-const DEFAULT_RICH_BODY = '<p>Hi {{Client Name}}, here is your invoice for {{Pending Amount}}.</p>';
+const DEFAULT_RICH_BODY = 'Hi {{name}},\n\nI hope this email finds you well.\n\nThis is a professional update regarding our recent records. Please let us know if you have any questions.\n\nBest regards,\nIKF Team';
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_EXT = ['pdf', 'xlsx', 'xls', 'csv', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'doc', 'docx', 'txt', 'zip', 'mp3', 'wav', 'm4a'];
 
@@ -117,6 +117,15 @@ export default function FileUpload() {
       setSampleIdx(Math.max(0, sampleData.length - 1));
     }
   }, [sampleData.length, sampleIdx]);
+
+  const totalRecipientCount = useMemo(() => {
+    if (!mapping.email || sampleData.length === 0) return 0;
+    return sampleData.reduce((acc, row) => {
+      const emailVal = String(row[mapping.email] || '');
+      const count = emailVal.split(',').filter(e => e.trim()).length;
+      return acc + (count || 0);
+    }, 0);
+  }, [sampleData, mapping.email]);
 
   // Load initial settings for the composer
   useEffect(() => {
@@ -404,9 +413,7 @@ export default function FileUpload() {
     // Finalize the themed template before launch
     // Senior QA: Pure Architect (Shell-Free Content)
     const finalSubject = applyTemplateAliases(template.subject || '');
-    const finalBody = template.is_html
-      ? ensureHtmlEmail(applyTemplateAliases(template.html))
-      : buildCorporateEmailTemplate(rawUserBody);
+    const finalBody = ensureHtmlEmail(applyTemplateAliases(template.is_html ? template.html : rawUserBody));
     if (!validateResolvedTemplate(finalSubject, finalBody)) {
       setLoading(false);
       return;
@@ -516,10 +523,13 @@ export default function FileUpload() {
     const input = (content || '').trim();
     if (!input) return '<p style="margin:0;color:#64748b;">No email content yet.</p>';
 
-    // If this already looks like HTML, keep it as-is.
-    if (/<[a-z][\s\S]*>/i.test(input)) return input;
+    // Smart Detection: If it's a full document, Return RAW.
+    if (input.toLowerCase().includes('<html') || input.toLowerCase().startsWith('<!doctype')) {
+      return input;
+    }
 
-    // Convert plain text into safe HTML paragraphs.
+    // Otherwise, Wrap in a universal, neutral, professional shell (Inbox fidelity)
+    // This provides a standard font stack, max-width, and clean white background.
     const escaped = input
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -527,83 +537,27 @@ export default function FileUpload() {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
 
-    return escaped
-      .split(/\n{2,}/)
-      .map(block => block.trim())
-      .filter(Boolean)
-      .map(block => `<p>${block.replace(/\n/g, '<br/>')}</p>`)
-      .join('');
-  };
+    const bodyHtml = /<[a-z][\s\S]*>/i.test(input) 
+      ? input 
+      : escaped.split(/\n{2,}/).map(b => `<p style="margin:0 0 1.2em 0;">${b.trim().replace(/\n/g, '<br/>')}</p>`).join('');
 
-  const buildCorporateEmailTemplate = (content: string) => {
-    const findColumnByKeywords = (keywords: string[]) =>
-      columns.find((col) => keywords.some((k) => col.toLowerCase().includes(k)));
-    const companyColumn = findColumnByKeywords(['company', 'organization', 'org', 'firm', 'business']);
-    const invoiceNumberColumn = findColumnByKeywords(['invoice number', 'invoice_no', 'invoice no', 'invoice', 'bill no', 'bill number']);
-    const amountTag = mapping.amount ? `{{${mapping.amount}}}` : 'the pending amount';
-    const dateTag = mapping.date ? `{{${mapping.date}}}` : 'the due date';
-    const companyTag = companyColumn ? `{{${companyColumn}}}` : 'Accounts';
-    const invoiceTag = invoiceNumberColumn ? `{{${invoiceNumberColumn}}}` : 'your invoice';
-    const normalizedBody = applyTemplateAliases(content);
-    const mainContent = ensureHtmlEmail(normalizedBody);
     return `
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#edf2f7;padding:28px 12px;margin:0;">
-        <tr>
-          <td align="center">
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;background:#ffffff;border:1px solid #dbe4ee;border-radius:14px;overflow:hidden;">
-              <tr>
-                <td style="padding:0;">
-                  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:linear-gradient(135deg,#0f3d75 0%,#174f95 100%);">
-                    <tr>
-                      <td style="padding:26px 30px 18px 30px;">
-                        <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:#bfdbfe;font-weight:700;">
-                          Invoice Reminder
-                        </div>
-                        <div style="font-family:Arial,Helvetica,sans-serif;font-size:24px;line-height:1.25;color:#ffffff;font-weight:700;margin-top:8px;">
-                          Payment due for ${invoiceTag}
-                        </div>
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-
-              <tr>
-                <td style="padding:22px 30px 8px 30px;">
-                  <table role="presentation" cellpadding="0" cellspacing="0" style="background:#f8fbff;border:1px solid #d7e7fb;border-radius:10px;">
-                    <tr>
-                      <td style="padding:10px 14px;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#1e3a5f;font-weight:700;letter-spacing:0.04em;">
-                        Amount Due: ${amountTag} &nbsp; | &nbsp; Due Date: ${dateTag}
-                      </td>
-                    </tr>
-                  </table>
-                </td>
-              </tr>
-
-              <tr>
-                <td style="padding:8px 30px 24px 30px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.75;color:#334155;">
-                  ${mainContent}
-                  <p style="margin:14px 0 0 0;">
-                    If payment has already been made, please ignore this message. If you need any support, reply to this email and our team will assist promptly.
-                  </p>
-                  <p style="margin:20px 0 0 0;">
-                    Warm regards,<br/>
-                    <strong>${companyTag} Finance Team</strong>
-                  </p>
-                </td>
-              </tr>
-
-              <tr>
-                <td style="padding:16px 30px;background:#f8fafc;border-top:1px solid #e2e8f0;">
-                  <div style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#64748b;line-height:1.6;">
-                    This is an automated payment reminder from ${companyTag}.
-                  </div>
-                </td>
-              </tr>
-            </table>
-          </td>
-        </tr>
-      </table>
+      <div style="background-color:#ffffff; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; width:100% !important; margin:0; padding:0;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px; margin:0 auto; background-color:#ffffff; border:1px solid #e2e8f0; border-radius:0px; overflow:hidden;">
+          <tr>
+            <td style="padding:40px; color:#1e293b; font-size:16px; line-height:1.6;">
+              ${bodyHtml}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:30px; text-align:center; background-color:#f8fafc; color:#64748b; font-size:12px; border-top:1px solid #e2e8f0;">
+              <p style="margin:0; font-weight:700; color:#0f172a; font-size:14px;">I Knowledge Factory (IKF)</p>
+              <p style="margin:4px 0 0 0;">craft | care | amplify</p>
+              <p style="margin-top:16px; opacity:0.6;">© 2026 I Knowledge Factory Pvt. Ltd. All rights reserved.</p>
+            </td>
+          </tr>
+        </table>
+      </div>
     `;
   };
 
@@ -646,35 +600,47 @@ export default function FileUpload() {
   const processPreview = (html: string) => {
     let res = html;
     const data = sampleData[sampleIdx] || {};
-    
-    // Senior QA: Unified Formatting Hook
-    // Matches backend's professional dispatch formatting
-    const formatVal = (val: any) => {
+
+    const AMOUNT_KEYWORDS = ['amount','price','total','fee','cost','balance','outstanding',
+      'payable','receivable','bill','invoice','payment','salary','revenue','profit',
+      'tax','discount','paid','due','charge','value','rate'];
+
+    const isAmountCol = (colName: string) => {
+      const slug = colName.toLowerCase().replace(/[\s_\-]/g, '');
+      return AMOUNT_KEYWORDS.some(k => slug.includes(k));
+    };
+
+    const formatVal = (val: any, colName?: string) => {
       if (val === undefined || val === null) return ' ';
       const s = String(val);
-      // Clean dates
-      if (s.includes('-') && s.length === 10) {
-        try {
-          const d = new Date(s);
-          if (!isNaN(d.getTime())) {
-            const dd = String(d.getDate()).padStart(2, '0');
-            const mm = String(d.getMonth() + 1).padStart(2, '0');
-            const yy = String(d.getFullYear()).slice(2);
-            return `${dd}/${mm}/${yy}`;
-          }
-        } catch {}
+
+      // Timestamp string: "2024-01-15 14:30:00" or "2024-01-15T00:00:00"
+      const tsMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})[T ]/);
+      if (tsMatch) return `${tsMatch[3]}/${tsMatch[2]}/${tsMatch[1].slice(2)}`;
+
+      // Already DD/MM/YYYY or DD/MM/YY
+      if (/^\d{2}\/\d{2}\/\d{2,4}$/.test(s)) return s;
+
+      // YYYY-MM-DD (no time)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [y, m, d] = s.split('-');
+        return `${d}/${m}/${y.slice(2)}`;
       }
-      // Clean numbers (Amount)
-      const numClean = s.replace(/[,₹$]/g, '').trim();
-      if (!isNaN(Number(numClean)) && numClean !== '') {
+
+      // Currency formatting — only for amount-like columns
+      if (colName && isAmountCol(colName)) {
+        const numClean = s.replace(/[,₹$€£\s]/g, '').trim();
         const n = Number(numClean);
-        if (n > 0) return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        if (!isNaN(n) && numClean !== '') {
+          return n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
       }
+
       return s;
     };
 
     columns.forEach(col => {
-      const colVal = formatVal(data[col]);
+      const colVal = formatVal(data[col], col);
       const escapedCol = col.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const escapedVal = String(colVal).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
       const regex = new RegExp(`{{${escapedCol}}}`, 'g');
@@ -682,16 +648,16 @@ export default function FileUpload() {
     });
 
     // Handle Smart Aliases in Preview
-    const aliases = {
+    const aliases: Record<string, string> = {
       'Recipient': data[mapping.name] || 'Recipient',
       'Client Name': data[mapping.name] || 'Recipient',
-      'Amount': data[mapping.amount] || '0.00',
-      'Pending Amount': data[mapping.amount] || '0.00',
-      'Date': data[mapping.date] || 'N/A',
-      'Due Date': data[mapping.date] || 'N/A'
+      'Amount': formatVal(data[mapping.amount], mapping.amount) || '0.00',
+      'Pending Amount': formatVal(data[mapping.amount], mapping.amount) || '0.00',
+      'Date': formatVal(data[mapping.date]) || 'N/A',
+      'Due Date': formatVal(data[mapping.date]) || 'N/A',
     };
     Object.entries(aliases).forEach(([k, v]) => {
-      const escapedVal = String(formatVal(v)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+      const escapedVal = String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
       const regex = new RegExp(`{{${k}}}`, 'gi');
       res = res.replace(regex, `<span style="background: rgba(6, 182, 212, 0.08); color: #0891b2; padding: 0 4px; border-radius: 4px; font-weight: 500;">${escapedVal}</span>`);
     });
@@ -701,12 +667,14 @@ export default function FileUpload() {
 
   const renderContentPrev = () => {
     // Senior QA: High-Fidelity Inbox Simulation (Proper & Stable)
-    const safeBody = template.is_html
-      ? ensureHtmlEmail(applyTemplateAliases(template.html))
-      : buildCorporateEmailTemplate(rawUserBody);
+    const safeBody = ensureHtmlEmail(applyTemplateAliases(template.is_html ? template.html : rawUserBody));
     const processed = processPreview(safeBody);
     
-    // Standardize Email-Friendly Shell
+    if (processed.toLowerCase().includes('<html') || processed.toLowerCase().startsWith('<!doctype')) {
+      return processed;
+    }
+
+    // Standardize Email-Friendly Shell for Partial segments
     return `
       <!DOCTYPE html>
       <html>
@@ -725,39 +693,18 @@ export default function FileUpload() {
               height: 100%;
               overflow-y: auto;
             }
-            .email-shell { 
-              max-width: 600px; 
-              margin: 20px auto; 
-              background: #ffffff; 
-              padding: 40px; 
-              box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-              border-radius: 8px;
-              min-height: 400px;
-            }
-            /* Reset Standard Tags for Inbox Consistency */
+            /* Inbox-Fidelity High-Stability Reset */
             p { margin-top: 0; margin-bottom: 1.25em; }
             ul, ol { margin-top: 0; margin-bottom: 1.25em; padding-left: 1.5em; }
             img { max-width: 100%; height: auto; }
-            table { width: 100% !important; table-layout: fixed; display: block; overflow-x: auto; }
+            table { width: 100% !important; border-collapse: collapse; }
             td, th { word-break: break-word; overflow-wrap: anywhere; }
             * { max-width: 100%; overflow-wrap: anywhere; }
             a { color: #1666d3; text-decoration: underline; }
-            
-            /* Responsive Viewport Override */
-            @media (max-width: 600px) {
-              .email-shell { 
-                margin: 0; padding: 20px; 
-                border-radius: 0; 
-                box-shadow: none; 
-                max-width: 100%; 
-              }
-            }
           </style>
         </head>
         <body>
-          <div class="email-shell">
-            ${processed}
-          </div>
+          ${processed}
         </body>
       </html>
     `;
@@ -1089,9 +1036,7 @@ export default function FileUpload() {
                          }
                          setTestLoading(true);
                          const finalSubject = applyTemplateAliases(template.subject || '');
-                         const finalBody = template.is_html
-                          ? ensureHtmlEmail(applyTemplateAliases(template.html))
-                           : buildCorporateEmailTemplate(rawUserBody);
+                         const finalBody = ensureHtmlEmail(applyTemplateAliases(template.is_html ? template.html : rawUserBody));
                          if (!validateResolvedTemplate(finalSubject, finalBody)) {
                            setTestLoading(false);
                            return;
@@ -1407,11 +1352,11 @@ export default function FileUpload() {
                                  <iframe 
                                    title="preview" 
                                    srcDoc={previewSrcDoc}
-                                   scrolling="yes"
-                                   style={{ 
+                                   style={{
+                                      overflow: 'auto',
                                       width: '100%',
                                       maxWidth: viewport === 'desktop' ? 900 : 420,
-                                      height: '100%', 
+                                      height: '100%',
                                       minHeight: 520,
                                       border: 'none', 
                                       overflowY: 'auto',
@@ -1572,16 +1517,16 @@ export default function FileUpload() {
                       <Typography variant="caption" sx={{ color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.07em' }}>
                         Recipients
                       </Typography>
-                      <Chip
-                        size="medium"
-                        label={`${sampleData.length} ${sampleData.length === 1 ? 'recipient' : 'recipients'}`}
-                        sx={{
-                          fontWeight: 800,
-                          bgcolor: 'rgba(22, 102, 211, 0.12)',
-                          color: 'var(--primary)',
-                          border: 'none',
-                        }}
-                      />
+                        <Chip
+                          size="medium"
+                          label={`${totalRecipientCount} ${totalRecipientCount === 1 ? 'EMAIL' : 'EMAILS'}`}
+                          sx={{
+                            fontWeight: 800,
+                            bgcolor: 'rgba(22, 102, 211, 0.12)',
+                            color: 'var(--primary)',
+                            border: 'none',
+                          }}
+                        />
                     </Stack>
                   </Box>
                 </Grid>
@@ -1690,8 +1635,8 @@ export default function FileUpload() {
                           boxShadow: '0 8px 24px rgba(22, 102, 211, 0.22)',
                         }}
                       >
-                        {sampleData.length > 0
-                          ? `Send ${sampleData.length} ${sampleData.length === 1 ? 'email' : 'emails'}`
+                        {totalRecipientCount > 0
+                          ? `Launch Outreach (${totalRecipientCount} ${totalRecipientCount === 1 ? 'Email' : 'Emails'})`
                           : 'No rows to send'}
                       </Button>
                       <Button

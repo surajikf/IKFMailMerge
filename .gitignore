@@ -23,6 +23,7 @@ token.json
 brevo_api_key.txt
 *.pem
 *.key
+data/secret.key
 
 # Logs
 *.log

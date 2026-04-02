@@ -11,3 +11,7 @@ python-multipart
 sib-api-v3-sdk
 python-dotenv
 requests
+python-jose[cryptography]
+passlib[bcrypt]
+bcrypt
+httpx
