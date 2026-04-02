@@ -26,7 +26,14 @@
       "Bash(node node_modules/.bin/vite build)",
       "Bash(node node_modules/vite/bin/vite.js build)",
       "Bash(wmic logicaldisk:*)",
-      "Bash([ ! -f /tmp/ikf_build/src/pages/LoginPage.tsx ])"
+      "Bash([ ! -f /tmp/ikf_build/src/pages/LoginPage.tsx ])",
+      "Bash(mkdir -p /tmp/ikf_build2)",
+      "Bash(cp '//192.168.2.100/Automated Invoice Email System/index.html' /tmp/ikf_build2/)",
+      "Bash(cp '//192.168.2.100/Automated Invoice Email System/vite.config.ts' /tmp/ikf_build2/)",
+      "Bash(cp '//192.168.2.100/Automated Invoice Email System/tsconfig.json' /tmp/ikf_build2/)",
+      "Bash(cp '//192.168.2.100/Automated Invoice Email System/tsconfig.node.json' /tmp/ikf_build2/)",
+      "Bash(ln -sf '//192.168.2.100/Automated Invoice Email System/node_modules' /tmp/ikf_build2/node_modules)",
+      "Read(//tmp/**)"
     ]
   }
 }
